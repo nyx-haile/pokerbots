@@ -32,8 +32,8 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
-_DEFAULT_DISCARD_SECONDS = _env_float("NEUROPOKER_DISCARD_MAX_SECONDS", 0.05)
-_DEFAULT_DISCARD_SAMPLES = _env_int("NEUROPOKER_DISCARD_SAMPLES", 150)
+_DEFAULT_DISCARD_SECONDS = _env_float("NEUROPOKER_DISCARD_MAX_SECONDS", 0.02)
+_DEFAULT_DISCARD_SAMPLES = _env_int("NEUROPOKER_DISCARD_SAMPLES", 100)
 
 class DeckEmptyException(Exception):
     pass
@@ -153,7 +153,13 @@ def _enumerate_discard_equity(hole, board, deck, remaining_cards):
     return tuple(equities)
 
 
-def discard_equity(hole: list, board: list, n_samples: int | None = None, max_seconds: float | None = None) -> tuple:
+def discard_equity(
+    hole: list,
+    board: list,
+    n_samples: int | None = None,
+    max_seconds: float | None = None,
+    return_metadata: bool = False,
+) -> tuple:
     """
     monte carlo board approximation
 
@@ -187,7 +193,7 @@ def discard_equity(hole: list, board: list, n_samples: int | None = None, max_se
     if max_seconds is None:
         max_seconds = _DEFAULT_DISCARD_SECONDS
     rng = random.Random()
-    stats = {discard: {"wins": 0, "losses": 0, "ties": 0} for discard in hole}
+    stats = {discard: {"wins": 0, "losses": 0, "ties": 0, "samples": 0} for discard in hole}
     hole_variants = {discard: [card for card in hole if card != discard] for discard in hole}
 
     start_time = time.perf_counter()
@@ -210,6 +216,7 @@ def discard_equity(hole: list, board: list, n_samples: int | None = None, max_se
                 stats[discard]["losses"] += 1
             else:
                 stats[discard]["ties"] += 1
+            stats[discard]["samples"] += 1
 
         samples += 1
 
@@ -217,11 +224,17 @@ def discard_equity(hole: list, board: list, n_samples: int | None = None, max_se
         return _enumerate_discard_equity(hole, board, deck, remaining_cards)
 
     equities = []
+    metadata = []
     for discard in hole:
         totals = stats[discard]
         total = totals["wins"] + totals["losses"] + totals["ties"]
         if not total:
             equities.append(0.5)
+            metadata.append({"discard": discard, "samples": totals["samples"]})
             continue
         equities.append((totals["wins"] + 0.5 * totals["ties"]) / total)
+        metadata.append({"discard": discard, "samples": totals["samples"]})
+
+    if return_metadata:
+        return tuple(equities), metadata
     return tuple(equities)
