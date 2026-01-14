@@ -1,218 +1,152 @@
-# Computes statistics for gamestates
-# Volatility of board, hand win probability, opponent hand range, etc.
-# Meant to be used as an oracle for strategy.py
+#here we are again
+import os
 
-import math
-import numpy as np
+from deuces import Card, Deck, Evaluator
 from itertools import combinations
 from functools import lru_cache
-from collections import Counter
 
+try:
+    from pokerstove import CardSet
+except ImportError:
+    CardSet = None
 
-RANKS = "23456789TJQKA"
-SUITS = "♠♥♦♣"
-DECK = [r + s for r in RANKS for s in SUITS]
+_BACKEND = os.environ.get("NEUROPOKER_EVAL_BACKEND", "auto").lower()
+_USE_POKERSTOVE = _BACKEND in ("auto", "pokerstove") and CardSet is not None
 
+evaluator = Evaluator()
 
-"""
-Terminology:
-    Player/Hero         Our bot
-    Villain             Enemy bot
-    Hole                Hero's cards
-    Hand                Villain's cards (usually a distribution)
-    Board/community     Communal Cards
-    Rank                Percentile ranking of the hero's hand + board (if exists)
-    Range               Rank distribution of the villain's hand + board
-    Equity              Expected payout (for the hero)
-    Risk                Expected payout (for the villain)
-
-Architecture
-
-    All functions should have a villain flag that allows
-    us to calculate them from the revealed information.
-
-    all functions should cache answers
-
-    all functions should calculate only explicit statistics
-    and any learning or models should happen in a separate
-    script.
-"""
-
-
-def all_hands(hole: set) -> set:
-    """
-    All possible opponent hands, excluding own cards.
-    """
-    other = DECK.symmetric_difference(hole)
-    return set(combinations(other, 3))
-
-def all_boards(hole: set, board: set) -> set:
-    """
-    All possible completions of the current board.
-    """
-    other = DECK.symmetric_difference(hole+board)
-
-@lru_cache(maxsize=None)
-#may have to change this later so
-#the 1GB ram limit is not broken.
-def hand_rank():
+class DeckEmptyException(Exception):
     pass
 
-def compare_hands():
-    pass
+class Sdeck(Deck):
+    def draw(self, n=1, card=None):
+        #update draw to allow monte carlo sim from any point
+        if card is not None:
+            card_int = Card.new(card)
+            if card_int in self.cards:
+                self.cards.remove(card_int)
+                return card
+            raise DeckEmptyException(f'{card} is not in the deck!')
 
-def rough_rank(hole: set, board: set) -> set:
+        return super().draw(n)
+
+
+def convert(card: str) -> int:
     """
-    Monte Carlo simulate possible poker hands.
+    converts cards from string format ('Qh')
+    into integer format as used by deuces.
     """
+    return Card.new(card)
 
-class Unused()
-"""
-    yeah it's an unused class. IT DOESN"T WORK!!"
-"""
+def _ensure_int_cards(cards):
+    if not cards:
+        return []
+    if isinstance(cards[0], int):
+        return list(cards)
+    return [convert(card) for card in cards]
 
+def _ensure_str_cards(cards):
+    if not cards:
+        return []
+    if isinstance(cards[0], str):
+        return list(cards)
+    return [Card.int_to_str(card) for card in cards]
 
-    def initial_range(self):
-        #return all possible opponent hands, given own hand.
-        #should throw an error if own_hand is not set.
-        pass
+def _deuces_best_eval(cards):
+    best = None
+    for combo in combinations(cards, 5):
+        rank = evaluator.evaluate(list(combo), [])
+        if best is None or rank < best:
+            best = rank
+    return best
 
-    def preflop_range(self):
-        #reference action sizes to adjust range estimate
-        pass
+def _pokerstove_best_eval(cards):
+    best = None
+    for combo in combinations(cards, 5):
+        score = CardSet("".join(combo)).evaluateHigh().code()
+        if best is None or score > best:
+            best = score
+    return best
 
-    def discard_distribution(self, pid, hole, community):
-        """
-        #reference action context to infer a PD over which card
+def evaluate_best(board, hand):
+    cards = list(board) + list(hand)
+    if _USE_POKERSTOVE:
+        return _pokerstove_best_eval(_ensure_str_cards(cards))
+    return _deuces_best_eval(_ensure_int_cards(cards))
 
-        #given  villain distribution (or exact, for training/testing?)
-        #       public board
-        #       positional context
-        #       betting history
-        #       betting model
-        #       discard model
+def compare_evals(hero_rank, villain_rank):
+    if _USE_POKERSTOVE:
+        if hero_rank > villain_rank:
+            return 1
+        if hero_rank < villain_rank:
+            return -1
+        return 0
+    if hero_rank < villain_rank:
+        return 1
+    if hero_rank > villain_rank:
+        return -1
+    return 0
 
-        #outputs: distrbution over cards/types being discarded, to integrate over
-
-        #   derived from
-        #   intrinsic utility ~= norm(1/eq(H\c | Board)) for a card c and hand H.
-        #   board externality ~= E[eq_opp| board + c ] - E[eq opp | board]
-        #   information strategy
-        #   basically learn the discard pattern and calculate from range.
-
-        #  present each of those scores as output
-
-        #poisoning matters more for the dealer than OOP.
-        #this function must condition on those positions.
-        """
-
-        pass
-
-    def discard_range(self):
-        #referene action sizes and discard to further adjust range estimate
-
-        """
-        assuming you drop a card c:
-
-        MUST ACCOUNT FOR POSITION
-
-        returns:
-            self-retention loss: ev_keep(c) - ev_drop(c)
-            board externality: ev_risk(board + c)-ev_risk(board)
-
-        """
-
-        pass
-
-    def ev_discard(self, srange, board):
-        # calculate game state from player discards
-        pass
-
-    def showdown_eq(self):
-        #estimate payout post discard
-        pass
-
-    def discard_eq(self):
-        #estimate payout pre discard
-        pass
-
-    def bet_size_likelihood(self, pid):
-        #save hand_strength_bucket and reference
-        pass
-
-    def fold_eq(pid, bet_size, street):
-        """
-        this should work for both sides.
-        if we have leaked little enough information to the
-        opponent that folding is attractive at a certain bet
-        size, we can force a win even with a low ev hand.
+def evaluate(board, hand):
+    """
+    returns ranking of best 5-card hand from the supplied cards
+    """
+    return evaluate_best(board, hand)
 
 
-        fold eq is
-            let f be the revealed fold eq of the villain
-            let P be the pot size
-            let B be the bet size
-            let R be the risk
-            let Eq be the equity
-            (1-f)*[Eq*(P+B)-(R)*B ]
-        """
-        #inform strategy  from aggression
-        pass
+@lru_cache(maxsize=200_000)
+def eq_cache(board_tuple, hole_tuple):
+    board = list(board_tuple)
+    hole = list(hole_tuple)
+    return evaluate(board, hole)
 
-    def update_model(pid, outcome):
-        pass
+def discard_equity(hole: list, board: list, n_samples: int=50) -> tuple:
+    """
+    monte carlo board approximation
 
-    def decay_model(pid, factor):
-        pass
+    H = [c1, c2, c3]
+    B = [b1, b2, b3?]
+    D = deck-H-B
 
-    def hand_strength_percentile(self):
-        pass
-
-    def discard_regret(self, card):
-        pass
-
-    def raise_ev(self, amount):
-        pass
-
-    def call_ev(self, amount):
-        pass
-
-    def update_hand(self, hand_id, hole, community, street):
-        pass
-
-    def update_action(self, player_id, action, amount, street):
-        pass
-
-    def finalise_hand(self, results):
-        pass #logging for now, optimisation later
-
-    def range(self, player_id, street, drop='optional'):
-        #calculate possible outcomes from current game state
-        pass
-
-    def equity(self, player_id, street, drop='optional'):
-        #calculate EV of current ranges
-        pass
-
-    def action_freq(self, pid, street, action_type):
-        pass
-
-    def bet_sizing(self, pid, street):
-        pass
-
-    def pot_size(self):
-        pass
-
-    def effective_stack(self, pid):
-        pass
-
-    def pot_odds(self, call_amount):
-        pass
-
-    def record_showdown(self, pid, hand, action_history):
-        pass
-
-    def decay_old_stats(self):
-        pass
+    hand = H- {c}
+    board = B + [c]
 
 
+    """
+    results = {}
+    hole = _ensure_int_cards(hole)
+    board = _ensure_int_cards(board)
+    known = hole + board
+    full_deck = Deck().cards
+    deck = set(full_deck).symmetric_difference(known)
+
+    remaining_cards = 6-len(board)-1
+
+    for discard in hole:
+        my_hole = [i for i in hole if i!= discard]
+        new_board = board+[discard]
+        wins = ties = losses = 0
+
+        for opp_hand in combinations(deck, 2):
+            remaining_deck = deck ^ set(opp_hand)
+
+            for board_fill in combinations(remaining_deck, remaining_cards):
+                final_board = new_board + list(board_fill)
+                #have to fix evaluator.evaluate to work with 8 cards.
+                #Might switch backends to the C++ version if speed is
+                #that much of an issue.
+                hero_rank = evaluate_best(final_board, my_hole)
+                villain_rank = evaluate_best(final_board, list(opp_hand))
+
+                result = compare_evals(hero_rank, villain_rank)
+                if result > 0:
+                    wins += 1
+                elif result < 0:
+                    losses += 1
+                else:
+                    ties += 1
+
+        total = wins+losses+ties
+        equity = (wins + 0.5*ties) /total
+        results[discard]=equity
+    return tuple(results[i] for i in results)

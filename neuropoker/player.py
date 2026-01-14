@@ -9,8 +9,8 @@ from skeleton.runner import parse_args, run_bot
 
 import random
 
-from stats3 import discard_equity
-from stats3 import convert
+from stats import discard_equity
+from stats import convert
 
 class Player(Bot):
     '''
@@ -104,11 +104,11 @@ class Player(Bot):
         # Only use DiscardAction if it's in legal_actions (which already checks street)
         # legal_actions() returns DiscardAction only when street is 2 or 3
         if DiscardAction in legal_actions:
-            # use stats3's equity calc
+            # use stats discard equity calc
             board_int = [convert(card) for card in board_cards]
             hole_int = [convert(card) for card in my_cards]
-            hand_vals = discard_equity(board_int, hole_int)
-            best_i = min(range(len(hand_vals)), key=lambda i:hand_vals[i])
+            hand_vals = discard_equity(hole_int, board_int)
+            best_i = max(range(len(hand_vals)), key=hand_vals.__getitem__)
             return DiscardAction(best_i)
         if RaiseAction in legal_actions:
             # the smallest and largest numbers of chips for a legal bet/raise
