@@ -2,11 +2,8 @@ import random
 
 import pytest
 
-try:
-    import neuropoker.stats as stats
-    from neuropoker.stats import compare_evals, convert, discard_equity, evaluate_best
-except ImportError as exc:  # pragma: no cover - environment without deps
-    pytest.skip(f"stats deps missing: {exc}", allow_module_level=True)
+import neuropoker.stats as stats
+from neuropoker.stats import compare_evals, convert, discard_equity, evaluate_best
 
 
 @pytest.fixture(autouse=True)
