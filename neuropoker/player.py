@@ -7,7 +7,10 @@ from skeleton.states import NUM_ROUNDS, STARTING_STACK, BIG_BLIND, SMALL_BLIND
 from skeleton.bot import Bot
 from skeleton.runner import parse_args, run_bot
 
+import os
 import random
+import sys
+import traceback
 import strategy
 import stats
 
@@ -31,7 +34,26 @@ class Player(Bot):
         '''
         self.hero = Ace()
         self.villain = Ace()
-        pass
+        self._logged_start = False
+        self._log(f"init python={sys.version.split()[0]}")
+        self._log(f"cwd={os.getcwd()}")
+        self._log(f"executable={sys.executable}")
+        self._log(f"sys.path[0:3]={sys.path[:3]}")
+        self._log(f"env.PYTHONPATH={os.environ.get('PYTHONPATH')}")
+        self._log(f"env.NEUROPOKER_EVAL_BACKEND={os.environ.get('NEUROPOKER_EVAL_BACKEND')}")
+        try:
+            import pokerstove  # noqa: F401
+            self._log("pokerstove=ok")
+        except Exception as exc:
+            self._log(f"pokerstove=missing ({exc})")
+        try:
+            import stats  # noqa: F401
+            self._log("stats=ok")
+        except Exception as exc:
+            self._log(f"stats=missing ({exc})")
+
+    def _log(self, message: str) -> None:
+        print(f"[bot] {message}", flush=True)
 
     def handle_new_round(self, game_state, round_state, active):
         '''
@@ -60,8 +82,8 @@ class Player(Bot):
 
         self.hero.blind = bool(active)  # True if you are the big blind
         self.villain.blind = not self.hero.blind
-
-        pass
+        if self.round_num % 100 == 1:
+            self._log(f"round={self.round_num} bankroll={self.hero.bankroll} clock={self.game_clock:.2f}")
 
     def handle_round_over(self, game_state, terminal_state, active):
         '''
@@ -86,8 +108,8 @@ class Player(Bot):
         self.villain.hand = self.previous_state.hands[1-active] # opponent's cards or [] if not revealed
 
         strategy.update_info_penalty_from_round(self)
-
-        pass
+        if self.round_num % 100 == 1:
+            self._log(f"round_over={self.round_num} delta={self.hero.delta}")
 
     def get_action(self, game_state, round_state, active):
         '''
@@ -150,7 +172,18 @@ class Player(Bot):
         # Only use DiscardAction if it's in legal_actions (which already checks street)
         # legal_actions() returns DiscardAction only when street is 2 or 3
 
-        return strategy.play(self)
+        if not self._logged_start:
+            self._log(f"first_action street={self.street} legal={self.hero.legal_actions}")
+            self._logged_start = True
+        try:
+            return strategy.play(self)
+        except Exception:
+            self._log("strategy error:\n" + traceback.format_exc())
+            if CheckAction in self.hero.legal_actions:
+                return CheckAction()
+            if CallAction in self.hero.legal_actions:
+                return CallAction()
+            return FoldAction()
         #export computation to strategy engine
 
         """
