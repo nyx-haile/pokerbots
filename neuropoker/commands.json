@@ -1,4 +1,4 @@
 {
-    "build": ["sh", "-lc", "./.venv/bin/python3.14 -m pip install pokerstove-*.whl || ./.venv/bin/python3.14 -m pip install neuropoker/pokerstove-*.whl"],
-    "run": ["./.venv/bin/python3.14", "player.py"]
+    "build": ["sh", "-lc", "true"],
+    "run": ["./runtime/bin/python3.14", "player.py"]
 }
