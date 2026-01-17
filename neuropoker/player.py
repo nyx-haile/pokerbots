@@ -8,9 +8,11 @@ from skeleton.bot import Bot
 from skeleton.runner import parse_args, run_bot
 
 import random
+import strategy
+import stats
 
-from stats import discard_equity
-from stats import convert
+class Ace():
+    pass
 
 class Player(Bot):
     '''
@@ -27,6 +29,8 @@ class Player(Bot):
         Returns:
         Nothing.
         '''
+        self.hero = Ace()
+        self.villain = Ace()
         pass
 
     def handle_new_round(self, game_state, round_state, active):
@@ -41,12 +45,22 @@ class Player(Bot):
         Returns:
         Nothing.
         '''
-        my_bankroll = game_state.bankroll  # the total number of chips you've gained or lost from the beginning of the game to the start of this round
-        # the total number of seconds your bot has left to play this game
-        game_clock = game_state.game_clock
-        round_num = game_state.round_num  # the round number from 1 to NUM_ROUNDS
-        my_cards = round_state.hands[active]  # your cards
-        big_blind = bool(active)  # True if you are the big blind
+        self.hero.bankroll = game_state.bankroll
+        # the total number of chips you've gained
+        # or lost from the beginning of the game
+        # to the start of this round
+
+        self.game_clock = game_state.game_clock
+        # the total number of seconds your
+        # bot has left to play this game
+
+        self.round_num = game_state.round_num  # the round number from 1 to NUM_ROUNDS
+
+        self.hero.hand = round_state.hands[active]  # your cards
+
+        self.hero.blind = bool(active)  # True if you are the big blind
+        self.villain.blind = not self.hero.blind
+
         pass
 
     def handle_round_over(self, game_state, terminal_state, active):
@@ -61,12 +75,16 @@ class Player(Bot):
         Returns:
         Nothing.
         '''
-        my_delta = terminal_state.deltas[active]  # your bankroll change from this round
-        previous_state = terminal_state.previous_state  # RoundState before payoffs
-        street = previous_state.street  # 0,2,3,4,5,6 representing when this round ended
-        my_cards = previous_state.hands[active]  # your cards
-        # opponent's cards or [] if not revealed
-        opp_cards = previous_state.hands[1-active]
+        self.hero.delta = terminal_state.deltas[active]  # your bankroll change from this round
+
+        self.previous_state = terminal_state.previous_state  # RoundState before payoffs
+
+        self.street = self.previous_state.street  # 0,2,3,4,5,6 representing when this round ended
+
+        self.hero.hand = self.previous_state.hands[active]  # your cards
+
+        self.villain.hand = self.previous_state.hands[1-active] # opponent's cards or [] if not revealed
+
         pass
 
     def get_action(self, game_state, round_state, active):
@@ -82,27 +100,58 @@ class Player(Bot):
         Returns:
         Your action.
         '''
-        legal_actions = round_state.legal_actions()  # the actions you are allowed to take
-        # 0, 3, 4, or 5 representing pre-flop, flop, turn, or river respectively
-        street = round_state.street
-        my_cards = round_state.hands[active]  # your cards
-        board_cards = round_state.board  # the board cards
+        self.hero.legal_actions = round_state.legal_actions()
+        self.villain.legal_actions = self.hero.legal_actions
+        # the actions you are allowed to take
+
+        self.street = round_state.street
+        # 0, 3, 4, or 5 representing pre-flop,
+        # flop, turn, or river respectively
+
+
+        hero_index = active
+        villain_index = 1 - active
+        self.hero.hand = round_state.hands[hero_index]  # your cards
+        self.villain.hand = []
+        self.community = round_state.board  # the board cards
+
         # the number of chips you have contributed to the pot this round of betting
-        my_pip = round_state.pips[active]
+        self.hero.pip = round_state.pips[hero_index]
+
         # the number of chips your opponent has contributed to the pot this round of betting
-        opp_pip = round_state.pips[1-active]
+        self.villain.pip = round_state.pips[villain_index]
+
         # the number of chips you have remaining
-        my_stack = round_state.stacks[active]
+        self.hero.stack = round_state.stacks[hero_index]
+
         # the number of chips your opponent has remaining
-        opp_stack = round_state.stacks[1-active]
-        continue_cost = opp_pip - my_pip  # the number of chips needed to stay in the pot
+        self.villain.stack = round_state.stacks[villain_index]
+
+        self.hero.continue_cost = self.villain.pip - self.hero.pip
+        # the number of chips needed to stay in the pot
+
         # the number of chips you have contributed to the pot
-        my_contribution = STARTING_STACK - my_stack
+        self.hero.contribution = STARTING_STACK - self.hero.stack
+
         # the number of chips your opponent has contributed to the pot
-        opp_contribution = STARTING_STACK - opp_stack
+        self.villain.contribution = STARTING_STACK - self.villain.stack
+
+        # opponent-facing public values
+        self.villain.continue_cost = self.hero.pip - self.villain.pip
+        self.hero.pot_total = self.hero.contribution + self.villain.contribution
+        self.villain.pot_total = self.hero.pot_total
+
+        if RaiseAction in self.hero.legal_actions:
+            self.hero.raise_bounds = round_state.raise_bounds()
+            self.villain.raise_bounds = self.hero.raise_bounds
 
         # Only use DiscardAction if it's in legal_actions (which already checks street)
         # legal_actions() returns DiscardAction only when street is 2 or 3
+
+        return strategy.play(self)
+        #export computation to strategy engine
+
+        """
         if DiscardAction in legal_actions:
             # use stats discard equity calc
             board_int = [convert(card) for card in board_cards]
@@ -110,19 +159,23 @@ class Player(Bot):
             hand_vals = discard_equity(hole_int, board_int)
             best_i = max(range(len(hand_vals)), key=hand_vals.__getitem__)
             return DiscardAction(best_i)
+
         if RaiseAction in legal_actions:
             # the smallest and largest numbers of chips for a legal bet/raise
             min_raise, max_raise = round_state.raise_bounds()
             min_cost = min_raise - my_pip  # the cost of a minimum bet/raise
             max_cost = max_raise - my_pip  # the cost of a maximum bet/raise
+
             if random.random() < 0.5:
                 return RaiseAction(min_raise)
         if CheckAction in legal_actions:  # check-call
             return CheckAction()
+
         if random.random() < 0.25:
             return FoldAction()
-        return CallAction()
 
+        return CallAction()
+        """
 
 if __name__ == '__main__':
     run_bot(Player(), parse_args())
