@@ -11,7 +11,7 @@ try:
     from pokerstove import CardSet as cs
 except ImportError:
     cs = None
-from typing import Sequence
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
 _BACKEND = os.environ.get("NEUROPOKER_EVAL_BACKEND", "auto").lower()
 _USE_POKERSTOVE = _BACKEND in ("auto", "pokerstove") and cs is not None
@@ -130,7 +130,7 @@ def eval_best_8(cards8_str):
     return best
 
 @lru_cache(maxsize=400_000)
-def _evaluate_best_cached(cards_tuple: tuple[int, ...]) -> int:
+def _evaluate_best_cached(cards_tuple: Tuple[int, ...]) -> int:
     cards = list(cards_tuple)
     if _USE_POKERSTOVE:
         return _pokerstove_best_eval(_ensure_str_cards(cards))
@@ -201,8 +201,8 @@ def _enumerate_discard_equity(hole, board, deck, remaining_cards):
 
 @lru_cache(maxsize=200_000)
 def _discard_equity_cached(
-    hole_tuple: tuple[int, ...],
-    board_tuple: tuple[int, ...],
+    hole_tuple: Tuple[int, ...],
+    board_tuple: Tuple[int, ...],
     n_samples: int,
 ) -> tuple:
     return _discard_equity_impl(
@@ -217,8 +217,8 @@ def _discard_equity_cached(
 def discard_equity(
     hole: list,
     board: list,
-    n_samples: int | None = None,
-    max_seconds: float | None = None,
+    n_samples: Optional[int] = None,
+    max_seconds: Optional[float] = None,
     return_metadata: bool = False,
 ) -> tuple:
     """
@@ -246,8 +246,8 @@ def discard_equity(
 def _discard_equity_impl(
     hole: list,
     board: list,
-    n_samples: int | None = None,
-    max_seconds: float | None = None,
+    n_samples: Optional[int] = None,
+    max_seconds: Optional[float] = None,
     return_metadata: bool = False,
 ) -> tuple:
     known = set(hole + board)
@@ -317,11 +317,11 @@ def _discard_equity_impl(
 
 
 def estimate_equity(
-    hero_hand: Sequence[str | int],
-    board_cards: Sequence[str | int],
-    samples: int | None = None,
-    max_seconds: float | None = None,
-    discard_samples: int | None = None,
+    hero_hand: Sequence[Union[str, int]],
+    board_cards: Sequence[Union[str, int]],
+    samples: Optional[int] = None,
+    max_seconds: Optional[float] = None,
+    discard_samples: Optional[int] = None,
 ) -> float:
     if samples is None:
         samples = _DEFAULT_EQUITY_SAMPLES
@@ -347,8 +347,8 @@ def _equity_seed(hero_tuple, board_tuple, samples, max_seconds, discard_samples)
 
 @lru_cache(maxsize=100_000)
 def _estimate_equity_cached(
-    hero_tuple: tuple[int, ...],
-    board_tuple: tuple[int, ...],
+    hero_tuple: Tuple[int, ...],
+    board_tuple: Tuple[int, ...],
     samples: int,
     max_seconds: float,
     discard_samples: int,
@@ -411,13 +411,13 @@ def _estimate_equity_cached(
 
 
 def _mc_equity_serial(
-    hero_int: list[int],
-    board_int: list[int],
-    deck: list[int],
+    hero_int: List[int],
+    board_int: List[int],
+    deck: List[int],
     remaining_board: int,
     samples: int,
     max_seconds: float,
-) -> tuple[int, int, int, int]:
+) -> Tuple[int, int, int, int]:
     rng = random.Random()
     wins = losses = ties = 0
     runs = 0
@@ -443,7 +443,7 @@ def _mc_equity_serial(
     return wins, losses, ties, runs
 
 
-def _mc_equity_worker(args) -> tuple[int, int, int, int]:
+def _mc_equity_worker(args) -> Tuple[int, int, int, int]:
     hero_int, board_int, deck, remaining_board, samples, seed = args
     rng = random.Random(seed)
     wins = losses = ties = 0
@@ -466,13 +466,13 @@ def _mc_equity_worker(args) -> tuple[int, int, int, int]:
 
 
 def _parallel_mc_equity(
-    hero_int: list[int],
-    board_int: list[int],
-    deck: list[int],
+    hero_int: List[int],
+    board_int: List[int],
+    deck: List[int],
     remaining_board: int,
     samples: int,
     max_seconds: float,
-) -> tuple[int, int, int, int]:
+) -> Tuple[int, int, int, int]:
     workers = max(1, min(_DEFAULT_MC_WORKERS, (multiprocessing.cpu_count() or 2)))
     if workers <= 1:
         return _mc_equity_serial(hero_int, board_int, deck, remaining_board, samples, max_seconds)

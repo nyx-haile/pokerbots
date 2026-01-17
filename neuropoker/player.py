@@ -13,9 +13,7 @@ import sys
 import traceback
 import strategy
 import stats
-
-class Ace():
-    pass
+from strategy import ActorView
 
 class Player(Bot):
     '''
@@ -32,8 +30,8 @@ class Player(Bot):
         Returns:
         Nothing.
         '''
-        self.hero = Ace()
-        self.villain = Ace()
+        self.hero = ActorView()
+        self.villain = ActorView()
         self._logged_start = False
         self._log(f"init python={sys.version.split()[0]}")
         self._log(f"cwd={os.getcwd()}")

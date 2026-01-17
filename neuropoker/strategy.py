@@ -1,7 +1,6 @@
-from __future__ import annotations
 from dataclasses import dataclass, field
 import random
-from typing import Iterable, Mapping, Protocol, Sequence
+from typing import Any, Iterable, Mapping, Optional, Sequence, Tuple, Dict
 
 import stats
 
@@ -18,7 +17,7 @@ class StrategyConfig:
     discard_randomness: float = 0.05
     bluff_rate: float = 0.03
     min_raise_fraction: float = 0.5
-    random_seed: int | None = None
+    random_seed: Optional[int] = None
 
 
 @dataclass
@@ -39,7 +38,7 @@ class OpponentModel:
     showdown_count: int = 0
 
 
-class ActorView(Protocol):
+class ActorView:
     legal_actions: Iterable[object]
     hand: Sequence[str]
     pip: int
@@ -48,10 +47,10 @@ class ActorView(Protocol):
     contribution: int
     pot_total: int
     blind: bool
-    raise_bounds: tuple[int, int]
+    raise_bounds: Tuple[int, int]
 
 
-class PlayerView(Protocol):
+class PlayerView:
     hero: ActorView
     villain: ActorView
     community: Sequence[str]
@@ -127,7 +126,7 @@ def update_opponent_model(model: OpponentModel, action: str) -> None:
         model.raise_count += 1
 
 
-def extract_features(values: Mapping[str, float]) -> dict[str, float]:
+def extract_features(values: Mapping[str, float]) -> Dict[str, float]:
     """Normalize and sanitize feature inputs for simple learners."""
     return {key: float(val) for key, val in values.items()}
 
@@ -166,7 +165,7 @@ def hebbian_update(
     weights: Mapping[str, float],
     features: Mapping[str, float],
     lr: float = 0.1,
-) -> dict[str, float]:
+) -> Dict[str, float]:
     """Apply a simple Hebbian update to a weight map."""
     updated = dict(weights)
     for key, value in features.items():
@@ -178,7 +177,7 @@ def mimetic_update(
     weights: Mapping[str, float],
     features: Mapping[str, float],
     lr: float = 0.1,
-) -> dict[str, float]:
+) -> Dict[str, float]:
     """Apply a reverse-Hebbian update to a weight map."""
     updated = dict(weights)
     for key, value in features.items():
@@ -325,7 +324,7 @@ def _board_is_flushy(board_int: Sequence[int]) -> bool:
     return False
 
 
-def _equity_budget(player: PlayerView) -> tuple[int, float, int]:
+def _equity_budget(player: PlayerView) -> Tuple[int, float, int]:
     street = player.street
     if street <= 0:
         samples = 60
@@ -348,7 +347,7 @@ def _equity_budget(player: PlayerView) -> tuple[int, float, int]:
     return samples, max_seconds, discard_samples
 
 
-def _discard_budget(player: PlayerView) -> tuple[int, float]:
+def _discard_budget(player: PlayerView) -> Tuple[int, float]:
     street = player.street
     if street <= 2:
         samples = 50

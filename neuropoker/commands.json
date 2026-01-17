@@ -1,4 +1,4 @@
 {
     "build": ["sh", "-lc", "true"],
-    "run": ["./runtime/bin/python3.14", "player.py"]
+    "run": ["python3", "player.py"]
 }
