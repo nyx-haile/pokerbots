@@ -85,6 +85,8 @@ class Player(Bot):
 
         self.villain.hand = self.previous_state.hands[1-active] # opponent's cards or [] if not revealed
 
+        strategy.update_info_penalty_from_round(self)
+
         pass
 
     def get_action(self, game_state, round_state, active):

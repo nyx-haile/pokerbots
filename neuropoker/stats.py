@@ -64,6 +64,46 @@ def _ensure_str_cards(cards):
         return list(cards)
     return [Card.int_to_str(card) for card in cards]
 
+def preflop_strength(hole_cards: Sequence[str | int]) -> float:
+    """
+    Fast heuristic for 3-card preflop strength in Toss or Hold'em.
+    Returns a value in [0, 1].
+    """
+    cards = _ensure_int_cards(list(hole_cards))
+    if len(cards) != 3:
+        return 0.5
+
+    ranks = [Card.get_rank_int(card) + 2 for card in cards]
+    suits = [Card.get_suit_int(card) for card in cards]
+    ranks_sorted = sorted(ranks, reverse=True)
+    rank_counts = {rank: ranks.count(rank) for rank in ranks}
+
+    base = sum(ranks_sorted) / (3 * 14)
+    pair_bonus = 0.0
+    if 3 in rank_counts.values():
+        pair_bonus = 0.25
+    elif 2 in rank_counts.values():
+        pair_bonus = 0.12
+
+    suited_bonus = 0.0
+    suit_counts = {suit: suits.count(suit) for suit in suits}
+    if 3 in suit_counts.values():
+        suited_bonus = 0.08
+    elif 2 in suit_counts.values():
+        suited_bonus = 0.04
+
+    gaps = sorted(ranks_sorted)
+    connected_bonus = 0.0
+    if gaps[2] - gaps[0] <= 4:
+        connected_bonus = 0.05
+    elif gaps[2] - gaps[1] <= 2 or gaps[1] - gaps[0] <= 2:
+        connected_bonus = 0.02
+
+    high_bonus = sum(0.02 for rank in ranks_sorted if rank >= 11)
+
+    strength = base + pair_bonus + suited_bonus + connected_bonus + high_bonus
+    return max(0.0, min(1.0, strength))
+
 def _deuces_best_eval(cards):
     best = None
     for combo in combinations(cards, 5):
@@ -159,6 +199,21 @@ def _enumerate_discard_equity(hole, board, deck, remaining_cards):
     return tuple(equities)
 
 
+@lru_cache(maxsize=200_000)
+def _discard_equity_cached(
+    hole_tuple: tuple[int, ...],
+    board_tuple: tuple[int, ...],
+    n_samples: int,
+) -> tuple:
+    return _discard_equity_impl(
+        list(hole_tuple),
+        list(board_tuple),
+        n_samples=n_samples,
+        max_seconds=0.0,
+        return_metadata=False,
+    )
+
+
 def discard_equity(
     hole: list,
     board: list,
@@ -182,7 +237,19 @@ def discard_equity(
     board = _ensure_int_cards(board)
     if not hole:
         return ()
+    if n_samples is not None and n_samples > 0 and (max_seconds is None or max_seconds == 0):
+        if not return_metadata:
+            return _discard_equity_cached(tuple(hole), tuple(board), int(n_samples))
+    return _discard_equity_impl(hole, board, n_samples=n_samples, max_seconds=max_seconds, return_metadata=return_metadata)
 
+
+def _discard_equity_impl(
+    hole: list,
+    board: list,
+    n_samples: int | None = None,
+    max_seconds: float | None = None,
+    return_metadata: bool = False,
+) -> tuple:
     known = set(hole + board)
     full_deck = Deck().cards
     deck = [card for card in full_deck if card not in known]
@@ -198,7 +265,10 @@ def discard_equity(
 
     if max_seconds is None:
         max_seconds = _DEFAULT_DISCARD_SECONDS
-    rng = random.Random()
+    seed = None
+    if max_seconds == 0 and n_samples is not None:
+        seed = hash((tuple(hole), tuple(board), int(n_samples))) & 0xFFFFFFFF
+    rng = random.Random(seed)
     stats = {discard: {"wins": 0, "losses": 0, "ties": 0, "samples": 0} for discard in hole}
     hole_variants = {discard: [card for card in hole if card != discard] for discard in hole}
 

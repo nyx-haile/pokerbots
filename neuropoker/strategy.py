@@ -5,6 +5,10 @@ from typing import Iterable, Mapping, Protocol, Sequence
 
 import stats
 
+_INFO_PENALTY = 0.05
+_INFO_PENALTY_MIN = 0.0
+_INFO_PENALTY_MAX = 0.12
+
 
 @dataclass(frozen=True)
 class StrategyConfig:
@@ -200,12 +204,6 @@ def _fallback_action(player: PlayerView):
     hero_hand = list(player.hero.hand)
     board_cards = list(player.community)
 
-    if len(legal_actions) == 1:
-        action = next(iter(legal_actions))
-        if action is DiscardAction:
-            return DiscardAction(0)
-        return action()
-
     if DiscardAction in legal_actions:
         discard_samples, discard_seconds = _discard_budget(player)
         equities = stats.discard_equity(
@@ -214,17 +212,30 @@ def _fallback_action(player: PlayerView):
             n_samples=discard_samples,
             max_seconds=discard_seconds,
         )
-        best_i = max(range(len(equities)), key=equities.__getitem__)
+        best_i = _select_discard_asymmetric(
+            hero_hand,
+            equities,
+            discard_visible=player.hero.blind,
+        )
+        player.hero.last_discard = hero_hand[best_i]
+        player.hero.last_discard_visible = player.hero.blind
         return DiscardAction(best_i)
 
-    samples, max_seconds, discard_samples = _equity_budget(player)
-    equity = stats.estimate_equity(
-        hero_hand,
-        board_cards,
-        samples=samples,
-        max_seconds=max_seconds,
-        discard_samples=discard_samples,
-    )
+    if len(legal_actions) == 1:
+        action = next(iter(legal_actions))
+        return action()
+
+    if player.street <= 0:
+        equity = stats.preflop_strength(hero_hand)
+    else:
+        samples, max_seconds, discard_samples = _equity_budget(player)
+        equity = stats.estimate_equity(
+            hero_hand,
+            board_cards,
+            samples=samples,
+            max_seconds=max_seconds,
+            discard_samples=discard_samples,
+        )
     pot_total = max(1, player.hero.pot_total)
     pot_odds = pot_odds_to_call(player.hero.continue_cost, pot_total)
     raise_margin = _raise_margin_by_street(player.street)
@@ -233,10 +244,13 @@ def _fallback_action(player: PlayerView):
     if RaiseAction in legal_actions:
         min_raise, max_raise = getattr(player.hero, "raise_bounds", (0, 0))
         raise_threshold = pot_odds + raise_margin
-        if equity > raise_threshold and min_raise > 0:
+        raise_cap = max(4, pot_total // 2)
+        if min_raise > raise_cap or min_raise > player.hero.stack // 2:
+            pass
+        elif equity > raise_threshold and min_raise > 0:
             target = _raise_size(pot_total, min_raise, max_raise, equity)
             return RaiseAction(target)
-        if equity < pot_odds - 0.1 and _should_bluff(player.street):
+        if equity < pot_odds - 0.1 and _should_bluff(player.street, board_cards):
             target = _raise_size(pot_total, min_raise, max_raise, equity, bluff=True)
             if target > 0:
                 return RaiseAction(target)
@@ -287,10 +301,28 @@ def _raise_size(pot_total: int, min_raise: int, max_raise: int, equity: float, b
     return min(target, max_raise)
 
 
-def _should_bluff(street: int) -> bool:
+def _should_bluff(street: int, board_cards: Sequence[str]) -> bool:
     if street < 3:
         return False
+    board_int = stats._ensure_int_cards(list(board_cards))
+    if _board_is_paired(board_int):
+        return False
+    if _board_is_flushy(board_int):
+        return False
     return random.random() < 0.06
+
+
+def _board_is_paired(board_int: Sequence[int]) -> bool:
+    ranks = [stats.Card.get_rank_int(card) for card in board_int]
+    return len(set(ranks)) < len(ranks)
+
+
+def _board_is_flushy(board_int: Sequence[int]) -> bool:
+    suits = [stats.Card.get_suit_int(card) for card in board_int]
+    for suit in set(suits):
+        if suits.count(suit) >= 3:
+            return True
+    return False
 
 
 def _equity_budget(player: PlayerView) -> tuple[int, float, int]:
@@ -320,15 +352,65 @@ def _discard_budget(player: PlayerView) -> tuple[int, float]:
     street = player.street
     if street <= 2:
         samples = 50
-        max_seconds = 0.015
+        max_seconds = 0.0
     else:
         samples = 70
-        max_seconds = 0.02
+        max_seconds = 0.0
     game_clock = getattr(player, "game_clock", None)
     if game_clock is not None and game_clock < 20:
         samples = max(30, samples // 2)
-        max_seconds = max(0.01, max_seconds * 0.5)
     return samples, max_seconds
+
+
+def _select_discard_asymmetric(
+    hero_hand: Sequence[str],
+    equities: Sequence[float],
+    discard_visible: bool,
+) -> int:
+    if not equities:
+        return 0
+    if not discard_visible:
+        return max(range(len(equities)), key=equities.__getitem__)
+
+    cards_int = stats._ensure_int_cards(list(hero_hand))
+    info_penalty = _INFO_PENALTY
+    scores = []
+    for idx, equity in enumerate(equities):
+        rank = stats.Card.get_rank_int(cards_int[idx]) + 2
+        scores.append(equity - info_penalty * (rank / 14))
+    return max(range(len(scores)), key=scores.__getitem__)
+
+
+def update_info_penalty_from_round(player: PlayerView) -> None:
+    """Adapt the information penalty based on observed outcomes."""
+    global _INFO_PENALTY
+    discard = getattr(player.hero, "last_discard", None)
+    discard_visible = getattr(player.hero, "last_discard_visible", None)
+    delta = getattr(player.hero, "delta", 0)
+    if discard is None or discard_visible is not True:
+        _INFO_PENALTY = _apply_info_penalty_decay(_INFO_PENALTY, player)
+        return
+    discard_int = stats._ensure_int_cards([discard])[0]
+    rank = stats.Card.get_rank_int(discard_int) + 2
+    strength = rank / 14
+    if delta < 0:
+        _INFO_PENALTY = min(_INFO_PENALTY_MAX, _INFO_PENALTY + 0.01 * strength)
+    elif delta > 0:
+        _INFO_PENALTY = max(_INFO_PENALTY_MIN, _INFO_PENALTY - 0.005 * strength)
+    _INFO_PENALTY = _apply_info_penalty_decay(_INFO_PENALTY, player)
+
+
+def _apply_info_penalty_decay(value: float, player: PlayerView) -> float:
+    round_num = getattr(player, "round_num", 0)
+    if round_num <= 0:
+        return value
+    if round_num < 200:
+        decay = 0.995
+    elif round_num < 600:
+        decay = 0.99
+    else:
+        decay = 0.985
+    return max(_INFO_PENALTY_MIN, min(_INFO_PENALTY_MAX, value * decay))
 
 
 def initial_opponent_range(position):
