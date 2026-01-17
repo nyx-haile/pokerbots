@@ -1,0 +1,8 @@
+sh: 1: uv: not found
+sh: 1: uv: not found
+Traceback (most recent call last):
+  File "player.py", line 11, in <module>
+    import strategy
+  File "/tmp/tmptiubf6_l/a0950cdc872b7a42621d/source/neuropoker/strategy.py", line 4, in <module>
+    from typing import Iterable, Mapping, Protocol, Sequence
+ImportError: cannot import name 'Protocol' from 'typing' (/usr/local/lib/python3.7/typing.py)
