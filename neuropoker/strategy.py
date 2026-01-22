@@ -272,8 +272,8 @@ def _raise_margin_by_street(street: int) -> float:
     if street <= 3:
         return 0.15
     if street <= 4:
-        return 0.12
-    return 0.1
+        return 0.18
+    return 0.16
 
 
 def _call_margin_by_street(street: int) -> float:
@@ -281,7 +281,9 @@ def _call_margin_by_street(street: int) -> float:
         return 0.05
     if street <= 3:
         return 0.03
-    return 0.02
+    if street <= 4:
+        return 0.05
+    return 0.06
 
 
 def _raise_size(pot_total: int, min_raise: int, max_raise: int, equity: float, bluff: bool = False) -> int:
