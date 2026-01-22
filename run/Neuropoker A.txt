@@ -1,0 +1,34 @@
+Defaulting to user installation because normal site-packages is not writeable
+Processing ./pokerstove-1.2-cp37-cp37m-linux_x86_64.whl
+Installing collected packages: pokerstove
+Successfully installed pokerstove-1.2
+WARNING: There was an error checking the latest version of pip.
+[bot] init python=3.7.17
+[bot] cwd=/home/lunaris/build/pokerbots/neuropoker
+[bot] executable=/usr/bin/python3.7
+[bot] sys.path[0:3]=['/home/lunaris/build/pokerbots/neuropoker', '/usr/lib/python37.zip', '/usr/lib/python3.7']
+[bot] env.PYTHONPATH=None
+[bot] env.NEUROPOKER_EVAL_BACKEND=None
+[bot] pokerstove=ok
+[bot] stats=ok
+[bot] round=1 bankroll=0 clock=60.00
+[bot] first_action street=0 legal={<class 'skeleton.actions.CallAction'>, <class 'skeleton.actions.RaiseAction'>, <class 'skeleton.actions.FoldAction'>}
+[bot] round_over=1 delta=-106
+[bot] round=101 bankroll=4779 clock=56.95
+[bot] round_over=101 delta=10
+[bot] round=201 bankroll=8092 clock=54.08
+[bot] round_over=201 delta=-10
+[bot] round=301 bankroll=11707 clock=51.08
+[bot] round_over=301 delta=8
+[bot] round=401 bankroll=15085 clock=47.91
+[bot] round_over=401 delta=6
+[bot] round=501 bankroll=18843 clock=44.94
+[bot] round_over=501 delta=16
+[bot] round=601 bankroll=22049 clock=41.85
+[bot] round_over=601 delta=-2
+[bot] round=701 bankroll=27971 clock=38.81
+[bot] round_over=701 delta=-22
+[bot] round=801 bankroll=32077 clock=35.76
+[bot] round_over=801 delta=67
+[bot] round=901 bankroll=35730 clock=32.87
+[bot] round_over=901 delta=-84

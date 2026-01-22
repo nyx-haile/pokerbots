@@ -1,9 +1,0 @@
-[project]
-name = "neuropoker"
-version = "0.0.1"
-description = "Experimental AI for poker"
-readme = "README.md"
-requires-python = "==3.7"
-dependencies = [
-    "deuces",
-]

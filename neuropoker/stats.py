@@ -64,7 +64,7 @@ def _ensure_str_cards(cards):
         return list(cards)
     return [Card.int_to_str(card) for card in cards]
 
-def preflop_strength(hole_cards: Sequence[str | int]) -> float:
+def preflop_strength(hole_cards: Sequence[Union[str, int]]) -> float:
     """
     Fast heuristic for 3-card preflop strength in Toss or Hold'em.
     Returns a value in [0, 1].
