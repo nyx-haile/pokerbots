@@ -7,6 +7,12 @@ import stats
 _INFO_PENALTY = 0.05
 _INFO_PENALTY_MIN = 0.0
 _INFO_PENALTY_MAX = 0.12
+_DISCARD_MODEL_DECAY = 0.995
+_OPPONENT_DISCARD_MODEL = {
+    "rank_counts": [0] * 13,
+    "suit_counts": [0] * 4,
+    "total": 0,
+}
 
 
 @dataclass(frozen=True)
@@ -243,6 +249,9 @@ def _fallback_action(player: PlayerView):
     pot_odds = pot_odds_to_call(player.hero.continue_cost, pot_total)
     raise_margin = _raise_margin_by_street(player.street)
     call_margin = _call_margin_by_street(player.street)
+    discard_bias = _opponent_discard_bias(player.street)
+    raise_margin += discard_bias
+    call_margin += discard_bias
 
     if RaiseAction in legal_actions:
         min_raise, max_raise = getattr(player.hero, "raise_bounds", (0, 0))
@@ -288,6 +297,26 @@ def _call_margin_by_street(street: int) -> float:
     if street <= 4:
         return 0.05
     return 0.06
+
+
+def _opponent_discard_bias(street: int) -> float:
+    if street < 4:
+        return 0.0
+    total = _OPPONENT_DISCARD_MODEL["total"]
+    if total <= 0:
+        return 0.0
+    rank_counts = _OPPONENT_DISCARD_MODEL["rank_counts"]
+    avg_rank = 0.0
+    for idx, count in enumerate(rank_counts):
+        avg_rank += (idx + 2) * count
+    avg_rank /= float(total)
+    if avg_rank <= 6:
+        return 0.02
+    if avg_rank <= 8:
+        return 0.01
+    if avg_rank >= 12:
+        return -0.01
+    return 0.0
 
 
 def _raise_size(pot_total: int, min_raise: int, max_raise: int, equity: float, bluff: bool = False) -> int:
@@ -432,6 +461,30 @@ def update_info_penalty_from_round(player: PlayerView) -> None:
     elif delta > 0:
         _INFO_PENALTY = max(_INFO_PENALTY_MIN, _INFO_PENALTY - 0.005 * strength)
     _INFO_PENALTY = _apply_info_penalty_decay(_INFO_PENALTY, player)
+
+
+def record_opponent_discard(card: str) -> None:
+    card_int = stats._ensure_int_cards([card])[0]
+    rank = stats.Card.get_rank_int(card_int)
+    suit = stats.Card.get_suit_int(card_int)
+    _OPPONENT_DISCARD_MODEL["rank_counts"][rank] += 1
+    _OPPONENT_DISCARD_MODEL["suit_counts"][suit] += 1
+    _OPPONENT_DISCARD_MODEL["total"] += 1
+
+
+def decay_discard_model() -> None:
+    total = _OPPONENT_DISCARD_MODEL["total"]
+    if total <= 0:
+        return
+    rank_counts = []
+    suit_counts = []
+    for count in _OPPONENT_DISCARD_MODEL["rank_counts"]:
+        rank_counts.append(count * _DISCARD_MODEL_DECAY)
+    for count in _OPPONENT_DISCARD_MODEL["suit_counts"]:
+        suit_counts.append(count * _DISCARD_MODEL_DECAY)
+    _OPPONENT_DISCARD_MODEL["rank_counts"] = rank_counts
+    _OPPONENT_DISCARD_MODEL["suit_counts"] = suit_counts
+    _OPPONENT_DISCARD_MODEL["total"] = total * _DISCARD_MODEL_DECAY
 
 
 def _apply_info_penalty_decay(value: float, player: PlayerView) -> float:

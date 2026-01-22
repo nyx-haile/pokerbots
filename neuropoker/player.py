@@ -33,6 +33,8 @@ class Player(Bot):
         self.hero = ActorView()
         self.villain = ActorView()
         self._logged_start = False
+        self._last_board_len = 0
+        self._pending_hero_discard = None
         self._log(f"init python={sys.version.split()[0]}")
         self._log(f"cwd={os.getcwd()}")
         self._log(f"executable={sys.executable}")
@@ -80,6 +82,8 @@ class Player(Bot):
 
         self.hero.blind = bool(active)  # True if you are the big blind
         self.villain.blind = not self.hero.blind
+        self._last_board_len = len(round_state.board)
+        self._pending_hero_discard = None
         if self.round_num % 100 == 1:
             self._log(f"round={self.round_num} bankroll={self.hero.bankroll} clock={self.game_clock:.2f}")
 
@@ -106,6 +110,7 @@ class Player(Bot):
         self.villain.hand = self.previous_state.hands[1-active] # opponent's cards or [] if not revealed
 
         strategy.update_info_penalty_from_round(self)
+        strategy.decay_discard_model()
         if self.round_num % 100 == 1:
             self._log(f"round_over={self.round_num} delta={self.hero.delta}")
 
@@ -136,6 +141,13 @@ class Player(Bot):
         self.hero.hand = round_state.hands[hero_index]  # your cards
         self.villain.hand = []
         self.community = round_state.board  # the board cards
+        if len(self.community) > self._last_board_len:
+            new_card = self.community[-1]
+            if self._pending_hero_discard == new_card:
+                self._pending_hero_discard = None
+            else:
+                strategy.record_opponent_discard(new_card)
+            self._last_board_len = len(self.community)
 
         # the number of chips you have contributed to the pot this round of betting
         self.hero.pip = round_state.pips[hero_index]
@@ -174,14 +186,21 @@ class Player(Bot):
             self._log(f"first_action street={self.street} legal={self.hero.legal_actions}")
             self._logged_start = True
         try:
-            return strategy.play(self)
+            action = strategy.play(self)
         except Exception:
             self._log("strategy error:\n" + traceback.format_exc())
             if CheckAction in self.hero.legal_actions:
-                return CheckAction()
-            if CallAction in self.hero.legal_actions:
-                return CallAction()
-            return FoldAction()
+                action = CheckAction()
+            elif CallAction in self.hero.legal_actions:
+                action = CallAction()
+            else:
+                action = FoldAction()
+        if isinstance(action, DiscardAction):
+            try:
+                self._pending_hero_discard = self.hero.hand[action.card]
+            except Exception:
+                self._pending_hero_discard = None
+        return action
         #export computation to strategy engine
 
         """
