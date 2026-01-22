@@ -1,0 +1,18 @@
+{
+  "engine_dir": "engine-2026",
+  "rounds": 1000,
+  "matches": 2,
+  "seat_swaps": true,
+  "seed_start": 1,
+  "output_dir": "evaluations",
+  "current": {
+    "name": "Neuropoker",
+    "path": "./neuropoker"
+  },
+  "baselines": [
+    {
+      "name": "Baseline A",
+      "path": "./engine-2026/python_skeleton"
+    }
+  ]
+}
