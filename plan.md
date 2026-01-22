@@ -30,7 +30,7 @@
 - Compare current bot vs previous versions and fixed baselines (DONE).
 
 ## Phase 1: Baseline fixes (correctness + speed)
-- Ensure pkrbot install is present and working on the server (offline install or bundled wheel as needed). (TODO)
+- Ensure pkrbot install is present and working on the server (offline install or bundled wheel as needed). (PARTIAL)
 - Review discard-equity simulations to cover opponent discard and future board cards; update notes when modeling assumptions change. (DONE)
 - Audit all bots for scrimmage server hardware constraints (single CPU core, no GPU) and remove unsupported assumptions. (TODO)
 - Cap thread usage and disable GPU-optional code paths where applicable (e.g., set OMP/MKL/BLAS thread caps, skip GPU imports). (TODO)
@@ -73,7 +73,7 @@
 
 ## Priority Ranking (Highest to Lowest)
 P0. Build self-play regression harness (engine-driven process isolation, deterministic seeds, seat swaps/duplicates, metrics/logging). (DONE)
-P1. Ensure pkrbot is installed and working on the server (baseline correctness/speed). (TODO)
+P1. Ensure pkrbot is installed and working on the server (baseline correctness/speed). (PARTIAL)
 P2. Review discard-equity simulations to cover opponent discard and future board cards. (DONE)
 P2.5. Update all bots to comply with server hardware constraints (single CPU core, no GPU) and enforce thread caps. (TODO)
 P4. Strengthen preflop with a tuned 3-card LUT or bucketed heuristic. (DONE)

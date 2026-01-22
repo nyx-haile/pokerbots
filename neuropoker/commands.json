@@ -1,4 +1,4 @@
 {
-    "build": ["sh", "-lc", "python3.7 -m ensurepip --upgrade >/dev/null 2>&1 || true; python3.7 -m pip install pokerstove-*.whl"],
+    "build": ["python3.7", "scripts/ensure_pkrbot.py"],
     "run": ["python3.7", "player.py"]
 }
