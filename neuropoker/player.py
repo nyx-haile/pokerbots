@@ -11,6 +11,18 @@ import os
 import random
 import sys
 import traceback
+
+_THREAD_ENV = {
+    "OMP_NUM_THREADS": "1",
+    "OPENBLAS_NUM_THREADS": "1",
+    "MKL_NUM_THREADS": "1",
+    "VECLIB_MAXIMUM_THREADS": "1",
+    "NUMEXPR_NUM_THREADS": "1",
+    "NEUROPOKER_MC_WORKERS": "1",
+}
+for key, value in _THREAD_ENV.items():
+    os.environ.setdefault(key, value)
+
 import strategy
 import stats
 from strategy import ActorView
