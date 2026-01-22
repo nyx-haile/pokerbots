@@ -90,6 +90,7 @@ def run() -> int:
     parser.add_argument("--player-log-limit", type=int, default=524288, help="Player log size limit")
     parser.add_argument("--gamelog-name", default="gamelog", help="Base name for gamelog")
     parser.add_argument("--output-dir", default="runs", help="Directory to write run outputs")
+    parser.add_argument("--seed", type=int, default=None, help="Deterministic seed for the engine RNG")
     parser.add_argument("--enforce-clock", action="store_true", help="Enable game clock")
     parser.add_argument("--no-enforce-clock", dest="enforce_clock", action="store_false")
     parser.set_defaults(enforce_clock=True)
@@ -117,15 +118,21 @@ def run() -> int:
     _write_config(run_config_path, args)
 
     stdout_path = os.path.join(run_dir, "engine_stdout.txt")
+    env = os.environ.copy()
+    if args.seed is not None:
+        env["POKERBOTS_SEED"] = str(args.seed)
     with open(stdout_path, "w") as stdout_handle:
         stdout_handle.write("Engine command: %s %s\n" % (sys.executable, run_engine_path))
         stdout_handle.write("Bot A: %s\n" % args.path_a)
         stdout_handle.write("Bot B: %s\n" % args.path_b)
+        if args.seed is not None:
+            stdout_handle.write("Seed: %s\n" % args.seed)
         stdout_handle.write("\n")
         stdout_handle.flush()
         proc = subprocess.Popen(
             [sys.executable, run_engine_path],
             cwd=run_dir,
+            env=env,
             stdout=stdout_handle,
             stderr=subprocess.STDOUT,
         )
