@@ -27,7 +27,7 @@
 - Use seat swaps or duplicate matches to reduce variance (DONE).
 - Capture gamelog + bot stdout/stderr; aggregate EV/hand, win rate, and variance (PARTIAL).
 - Enforce timeouts and handle crashes as forfeits to keep runs going (TODO).
-- Compare current bot vs previous versions and fixed baselines (TODO).
+- Compare current bot vs previous versions and fixed baselines (PARTIAL).
 
 ## Phase 1: Baseline fixes (correctness + speed)
 - Ensure cp37 PokerStove wheel builds and installs on the server (offline install via scripts/ensure_pokerstove.py). (DONE)
