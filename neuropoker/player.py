@@ -39,6 +39,8 @@ class Player(Bot):
         self._last_bet_pot = None
         self._last_bet_street = None
         self._last_aggressor = False
+        self._last_villain_pip = 0
+        self._last_street_seen = 0
         self._log(f"init python={sys.version.split()[0]}")
         self._log(f"cwd={os.getcwd()}")
         self._log(f"executable={sys.executable}")
@@ -92,6 +94,8 @@ class Player(Bot):
         self._last_bet_pot = None
         self._last_bet_street = None
         self._last_aggressor = False
+        self._last_villain_pip = round_state.pips[1 - active]
+        self._last_street_seen = round_state.street
         if self.round_num % 100 == 1:
             self._log(f"round={self.round_num} bankroll={self.hero.bankroll} clock={self.game_clock:.2f}")
 
@@ -120,6 +124,7 @@ class Player(Bot):
         strategy.update_info_penalty_from_round(self)
         strategy.decay_discard_model()
         strategy.decay_bet_model()
+        strategy.decay_range_model()
         if self._last_aggressor and self._last_bet_size is not None:
             villain_revealed = bool(self.villain.hand)
             if self.hero.delta > 0 and not villain_revealed:
@@ -206,6 +211,14 @@ class Player(Bot):
 
         if self.hero.continue_cost > 0:
             self._last_aggressor = False
+
+        if self._last_street_seen == self.street:
+            if self.villain.pip > self._last_villain_pip:
+                strategy.record_opponent_raise(self.street)
+            elif self.villain.pip == self._last_villain_pip and self.hero.continue_cost == 0:
+                strategy.record_opponent_action(self.street)
+        self._last_villain_pip = self.villain.pip
+        self._last_street_seen = self.street
 
         # Only use DiscardAction if it's in legal_actions (which already checks street)
         # legal_actions() returns DiscardAction only when street is 2 or 3

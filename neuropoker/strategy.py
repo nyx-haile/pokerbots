@@ -17,6 +17,10 @@ _BET_MODEL_DECAY = 0.99
 _OPPONENT_BET_MODEL = {
     "by_street": {},
 }
+_RANGE_MODEL_DECAY = 0.99
+_OPPONENT_RANGE_MODEL = {
+    "by_street": {},
+}
 
 
 @dataclass(frozen=True)
@@ -242,20 +246,39 @@ def _fallback_action(player: PlayerView):
         equity = stats.preflop_strength(hero_hand)
     else:
         samples, max_seconds, discard_samples = _equity_budget(player)
-        equity = stats.estimate_equity(
+        quick_equity = stats.estimate_equity(
             hero_hand,
             board_cards,
-            samples=samples,
-            max_seconds=max_seconds,
-            discard_samples=discard_samples,
+            samples=max(20, samples // 4),
+            max_seconds=min(0.006, max_seconds * 0.2),
+            discard_samples=max(4, discard_samples // 2),
         )
+        equity = quick_equity
     pot_total = max(1, player.hero.pot_total)
     pot_odds = pot_odds_to_call(player.hero.continue_cost, pot_total)
     raise_margin = _raise_margin_by_street(player.street)
     call_margin = _call_margin_by_street(player.street)
     discard_bias = _opponent_discard_bias(player.street)
+    range_bias = _opponent_range_bias(player.street)
     raise_margin += discard_bias
     call_margin += discard_bias
+    raise_margin += range_bias
+    call_margin += range_bias
+
+    if player.street > 0:
+        raise_threshold = pot_odds + raise_margin
+        if quick_equity > raise_threshold + 0.12:
+            equity = quick_equity
+        elif quick_equity < pot_odds - call_margin - 0.12:
+            equity = quick_equity
+        else:
+            equity = stats.estimate_equity(
+                hero_hand,
+                board_cards,
+                samples=samples,
+                max_seconds=max_seconds,
+                discard_samples=discard_samples,
+            )
 
     if RaiseAction in legal_actions:
         min_raise, max_raise = getattr(player.hero, "raise_bounds", (0, 0))
@@ -324,6 +347,24 @@ def _opponent_discard_bias(street: int) -> float:
     if avg_rank <= 8:
         return 0.01
     if avg_rank >= 12:
+        return -0.01
+    return 0.0
+
+
+def _opponent_range_bias(street: int) -> float:
+    bucket = _OPPONENT_RANGE_MODEL["by_street"].get(street)
+    if not bucket:
+        return 0.0
+    total = bucket.get("total", 0.0)
+    raises = bucket.get("raises", 0.0)
+    if total < 6:
+        return 0.0
+    raise_rate = raises / total
+    if raise_rate >= 0.5:
+        return 0.02
+    if raise_rate >= 0.3:
+        return 0.01
+    if raise_rate <= 0.15:
         return -0.01
     return 0.0
 
@@ -417,6 +458,23 @@ def fold_equity_estimate(player_id, bet_size: int, street: int, pot_total: int) 
     if fold_rate > 0.0:
         return fold_rate
     return _opponent_fold_rate(street, None)
+
+
+def record_opponent_raise(street: int) -> None:
+    bucket = _OPPONENT_RANGE_MODEL["by_street"].setdefault(street, {"raises": 0.0, "total": 0.0})
+    bucket["raises"] += 1.0
+    bucket["total"] += 1.0
+
+
+def record_opponent_action(street: int) -> None:
+    bucket = _OPPONENT_RANGE_MODEL["by_street"].setdefault(street, {"raises": 0.0, "total": 0.0})
+    bucket["total"] += 1.0
+
+
+def decay_range_model() -> None:
+    for bucket in _OPPONENT_RANGE_MODEL["by_street"].values():
+        bucket["raises"] *= _RANGE_MODEL_DECAY
+        bucket["total"] *= _RANGE_MODEL_DECAY
 
 
 def _should_bluff(street: int, board_cards: Sequence[str]) -> bool:

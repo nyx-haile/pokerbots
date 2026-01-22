@@ -47,7 +47,7 @@
 - Strengthen preflop with a tuned 3-card LUT or bucketed heuristic. (DONE)
 - Tighten value thresholds for post-discard play (stronger hands more common with 6-board). (TODO)
 - Add board-texture-aware value betting and pot control. (PARTIAL)
-- Add staged computation with early exits for low-stakes decisions. (PARTIAL)
+- Add staged computation with early exits for low-stakes decisions. (DONE)
 
 ## Phase 3: Discard intelligence
 - Compute self-equity and board-externality for each discard. (PARTIAL)
@@ -57,7 +57,7 @@
 
 ## Phase 4: Opponent modeling
 - Track fold frequency by bet size and street with decay. (PARTIAL)
-- Track raise/call ratios and showdowns to infer range strength. (TODO)
+- Track raise/call ratios and showdowns to infer range strength. (PARTIAL)
 - Track discard patterns to update opponent range after discard. (TODO)
 - Use adaptive bet sizing (larger vs overfolds, thinner value vs callers). (PARTIAL)
 
