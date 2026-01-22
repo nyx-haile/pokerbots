@@ -25,7 +25,7 @@
 - Build an engine-driven match runner that spawns two bots as separate processes (DONE).
 - Add deterministic seed control for reproducible runs; log the seed per match (DONE).
 - Use seat swaps or duplicate matches to reduce variance (DONE).
-- Capture gamelog + bot stdout/stderr; aggregate EV/hand, win rate, and variance (PARTIAL).
+- Capture gamelog + bot stdout/stderr; aggregate EV/hand, win rate, and variance (DONE).
 - Enforce timeouts and handle crashes as forfeits to keep runs going (DONE).
 - Compare current bot vs previous versions and fixed baselines (PARTIAL).
 
