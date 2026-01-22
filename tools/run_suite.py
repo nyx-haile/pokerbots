@@ -14,10 +14,15 @@ def _timestamp() -> str:
     return _dt.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
 
 
-def _run_match(cmd, cwd):
-    proc = subprocess.Popen(cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    out, _ = proc.communicate()
-    return proc.returncode, out.decode("utf-8", errors="replace")
+def _run_match(cmd, cwd, timeout):
+    try:
+        proc = subprocess.Popen(cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        out, _ = proc.communicate(timeout=timeout)
+        return proc.returncode, out.decode("utf-8", errors="replace"), False
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        out, _ = proc.communicate()
+        return 124, out.decode("utf-8", errors="replace"), True
 
 
 def _parse_summary(summary_path):
@@ -25,9 +30,10 @@ def _parse_summary(summary_path):
         return json.load(handle)
 
 
-def _aggregate(all_summaries):
+def _aggregate(all_summaries, failures):
     aggregate = {
         "matches": len(all_summaries),
+        "failures": failures,
         "players": {},
         "summaries": all_summaries,
     }
@@ -63,6 +69,7 @@ def main():
     parser.add_argument("--seat-swaps", action="store_true", help="Run a second match swapping seats")
     parser.add_argument("--seed-start", type=int, default=1, help="Starting seed")
     parser.add_argument("--output-dir", default="runs", help="Output directory")
+    parser.add_argument("--match-timeout", type=int, default=900, help="Timeout per match in seconds")
     args = parser.parse_args()
 
     base_dir = os.path.abspath(args.output_dir)
@@ -72,6 +79,7 @@ def main():
     os.makedirs(suite_dir)
 
     summaries = []
+    failures = []
     run_match_script = os.path.join(os.path.dirname(__file__), "run_match.py")
     parse_script = os.path.join(os.path.dirname(__file__), "parse_gamelog.py")
 
@@ -90,10 +98,17 @@ def main():
             "--seed", str(seed),
             "--output-dir", match_dir,
         ]
-        code, output = _run_match(cmd, cwd=suite_dir)
+        code, output, timed_out = _run_match(cmd, cwd=suite_dir, timeout=args.match_timeout)
         with open(os.path.join(match_dir, "run_match_stdout.txt"), "w") as handle:
             handle.write(output)
         if code != 0:
+            failures.append({
+                "seed": seed,
+                "swap": False,
+                "return_code": code,
+                "timed_out": timed_out,
+                "match_dir": os.path.abspath(match_dir),
+            })
             continue
 
         match_runs = [d for d in os.listdir(match_dir) if os.path.isdir(os.path.join(match_dir, d))]
@@ -104,11 +119,19 @@ def main():
         gamelog = os.path.join(run_path, "gamelog.txt")
         summary_path = os.path.join(run_path, "summary.json")
         parse_cmd = [sys.executable, parse_script, gamelog, "--json-out", summary_path]
-        parse_code, parse_out = _run_match(parse_cmd, cwd=suite_dir)
+        parse_code, parse_out, parse_timed_out = _run_match(parse_cmd, cwd=suite_dir, timeout=60)
         with open(os.path.join(run_path, "parse_stdout.txt"), "w") as handle:
             handle.write(parse_out)
         if parse_code == 0:
             summaries.append(_parse_summary(summary_path))
+        else:
+            failures.append({
+                "seed": seed,
+                "swap": False,
+                "return_code": parse_code,
+                "timed_out": parse_timed_out,
+                "match_dir": os.path.abspath(run_path),
+            })
 
         if args.seat_swaps:
             swap_dir = os.path.join(match_dir, "swap")
@@ -123,10 +146,17 @@ def main():
                 "--seed", str(seed),
                 "--output-dir", swap_dir,
             ]
-            swap_code, swap_out = _run_match(swap_cmd, cwd=suite_dir)
+            swap_code, swap_out, swap_timed_out = _run_match(swap_cmd, cwd=suite_dir, timeout=args.match_timeout)
             with open(os.path.join(swap_dir, "run_match_stdout.txt"), "w") as handle:
                 handle.write(swap_out)
             if swap_code != 0:
+                failures.append({
+                    "seed": seed,
+                    "swap": True,
+                    "return_code": swap_code,
+                    "timed_out": swap_timed_out,
+                    "match_dir": os.path.abspath(swap_dir),
+                })
                 continue
             swap_runs = [d for d in os.listdir(swap_dir) if os.path.isdir(os.path.join(swap_dir, d))]
             if not swap_runs:
@@ -136,13 +166,23 @@ def main():
             swap_gamelog = os.path.join(swap_run_path, "gamelog.txt")
             swap_summary_path = os.path.join(swap_run_path, "summary.json")
             swap_parse_cmd = [sys.executable, parse_script, swap_gamelog, "--json-out", swap_summary_path]
-            swap_parse_code, swap_parse_out = _run_match(swap_parse_cmd, cwd=suite_dir)
+            swap_parse_code, swap_parse_out, swap_parse_timed_out = _run_match(
+                swap_parse_cmd, cwd=suite_dir, timeout=60
+            )
             with open(os.path.join(swap_run_path, "parse_stdout.txt"), "w") as handle:
                 handle.write(swap_parse_out)
             if swap_parse_code == 0:
                 summaries.append(_parse_summary(swap_summary_path))
+            else:
+                failures.append({
+                    "seed": seed,
+                    "swap": True,
+                    "return_code": swap_parse_code,
+                    "timed_out": swap_parse_timed_out,
+                    "match_dir": os.path.abspath(swap_run_path),
+                })
 
-    aggregate = _aggregate(summaries)
+    aggregate = _aggregate(summaries, failures)
     summary_path = os.path.join(suite_dir, "suite_summary.json")
     with open(summary_path, "w") as handle:
         json.dump(aggregate, handle, indent=2, sort_keys=True)
