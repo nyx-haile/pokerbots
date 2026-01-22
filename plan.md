@@ -59,7 +59,7 @@
 - Track fold frequency by bet size and street with decay. (TODO)
 - Track raise/call ratios and showdowns to infer range strength. (TODO)
 - Track discard patterns to update opponent range after discard. (TODO)
-- Use adaptive bet sizing (larger vs overfolds, thinner value vs callers). (TODO)
+- Use adaptive bet sizing (larger vs overfolds, thinner value vs callers). (PARTIAL)
 
 ## Phase 5: Lightweight learning experiments
 - Add a random-feature policy (ELM / random kitchen sinks) with a linear readout. (TODO)
