@@ -61,6 +61,8 @@ def main():
         pass
 
     wheels = sorted(glob.glob("pkrbot-*.whl"))
+    if not wheels and os.path.isdir("vendor"):
+        wheels = sorted(glob.glob(os.path.join("vendor", "pkrbot-*.whl")))
     if not wheels:
         _log("no pkrbot wheel found in cwd")
         return 1

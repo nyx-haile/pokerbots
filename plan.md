@@ -40,7 +40,7 @@
 - `neuropoker/strategy.py`: avoid heavy loops per decision; add early exits/low-sample fallbacks for single-core runtime. (DONE)
 - `neuropoker/stats.py`: enforce thread caps for BLAS/OpenMP backends; keep CPU-only eval path. (DONE)
 - `neuropoker/scripts/ensure_pkrbot.py`: verify wheel install path works offline and is CPU-only (if needed). (PARTIAL)
-- `engine-2026/config.py`: confirm bot configs do not assume multi-core or GPU resources. (TODO)
+- `engine-2026/config.py`: confirm bot configs do not assume multi-core or GPU resources. (DONE)
 
 ## Phase 2: Core decision model
 - Strengthen preflop with a tuned 3-card LUT or bucketed heuristic. (DONE)
@@ -69,7 +69,7 @@
 - Use the self-play harness to evaluate every strategy change vs baseline. (DONE)
 - Log EV, win rate, action frequencies, and discard outcomes. (DONE)
 - Compare against baseline and select stable defaults. (DONE)
-- Tune timeouts and sampling budgets to avoid engine timeouts. (TODO)
+- Tune timeouts and sampling budgets to avoid engine timeouts. (DONE)
 
 ## Priority Ranking (Highest to Lowest)
 P0. Build self-play regression harness (engine-driven process isolation, deterministic seeds, seat swaps/duplicates, metrics/logging). (DONE)
@@ -93,7 +93,7 @@ P17. Use online Hebbian updates; test Mimetic updates if activations are inverti
 P18. Keep model size small (dozens of weights) to preserve speed. (TODO)
 P19. Log EV, win rate, action frequencies, and discard outcomes. (DONE)
 P20. Compare against baseline and select stable defaults. (DONE)
-P21. Tune timeouts and sampling budgets to avoid engine timeouts. (TODO)
+P21. Tune timeouts and sampling budgets to avoid engine timeouts. (DONE)
 
 ## Deliverables
 - Updated `stats.py` for 8-card evaluation, caching, and sampling.

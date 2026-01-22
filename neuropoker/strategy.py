@@ -548,36 +548,42 @@ def _equity_budget(player: PlayerView) -> Tuple[int, float, int]:
     street = player.street
     if street <= 0:
         samples = 60
-        max_seconds = 0.02
+        max_seconds = 0.018
         discard_samples = 8
     elif street <= 3:
-        samples = 80
-        max_seconds = 0.025
+        samples = 70
+        max_seconds = 0.02
         discard_samples = 10
     else:
-        samples = 120
-        max_seconds = 0.03
-        discard_samples = 12
+        samples = 100
+        max_seconds = 0.025
+        discard_samples = 10
 
     game_clock = getattr(player, "game_clock", None)
     if game_clock is not None and game_clock < 20:
         samples = max(30, samples // 2)
         max_seconds = max(0.01, max_seconds * 0.5)
         discard_samples = max(5, discard_samples // 2)
+    if game_clock is not None and game_clock < 10:
+        samples = max(20, samples // 2)
+        max_seconds = max(0.005, max_seconds * 0.5)
+        discard_samples = max(4, discard_samples // 2)
     return samples, max_seconds, discard_samples
 
 
 def _discard_budget(player: PlayerView) -> Tuple[int, float]:
     street = player.street
     if street <= 2:
-        samples = 50
+        samples = 40
         max_seconds = 0.0
     else:
-        samples = 70
+        samples = 60
         max_seconds = 0.0
     game_clock = getattr(player, "game_clock", None)
     if game_clock is not None and game_clock < 20:
         samples = max(30, samples // 2)
+    if game_clock is not None and game_clock < 10:
+        samples = max(20, samples // 2)
     return samples, max_seconds
 
 
