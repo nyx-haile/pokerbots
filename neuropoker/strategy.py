@@ -204,6 +204,9 @@ def _fallback_action(player: PlayerView):
     board_cards = list(player.community)
 
     if DiscardAction in legal_actions:
+        opponent_discard = None
+        if not player.hero.blind and len(board_cards) >= 3:
+            opponent_discard = board_cards[-1]
         discard_samples, discard_seconds = _discard_budget(player)
         equities = stats.discard_equity(
             hero_hand,
@@ -215,6 +218,7 @@ def _fallback_action(player: PlayerView):
             hero_hand,
             equities,
             discard_visible=player.hero.blind,
+            opponent_discard=opponent_discard,
         )
         player.hero.last_discard = hero_hand[best_i]
         player.hero.last_discard_visible = player.hero.blind
@@ -367,19 +371,48 @@ def _select_discard_asymmetric(
     hero_hand: Sequence[str],
     equities: Sequence[float],
     discard_visible: bool,
+    opponent_discard: Optional[str] = None,
 ) -> int:
     if not equities:
         return 0
-    if not discard_visible:
+    if not discard_visible and opponent_discard is None:
         return max(range(len(equities)), key=equities.__getitem__)
 
     cards_int = stats._ensure_int_cards(list(hero_hand))
-    info_penalty = _INFO_PENALTY
+    info_penalty = _INFO_PENALTY if discard_visible else 0.0
     scores = []
+    opponent_int = None
+    if opponent_discard is not None:
+        opponent_int = stats._ensure_int_cards([opponent_discard])[0]
     for idx, equity in enumerate(equities):
         rank = stats.Card.get_rank_int(cards_int[idx]) + 2
-        scores.append(equity - info_penalty * (rank / 14))
+        score = equity - info_penalty * (rank / 14)
+        if opponent_int is not None:
+            discard_card = cards_int[idx]
+            keep_cards = [card for i, card in enumerate(cards_int) if i != idx]
+            score -= _discard_order_penalty(keep_cards, discard_card, opponent_int)
+        scores.append(score)
     return max(range(len(scores)), key=scores.__getitem__)
+
+
+def _discard_order_penalty(
+    keep_cards: Sequence[int],
+    discard_card: int,
+    opponent_discard: int,
+) -> float:
+    """Penalize discards that strengthen the public board when acting second."""
+    penalty = 0.0
+    discard_suit = stats.Card.get_suit_int(discard_card)
+    discard_rank = stats.Card.get_rank_int(discard_card)
+    keep_suits = [stats.Card.get_suit_int(card) for card in keep_cards]
+    keep_ranks = [stats.Card.get_rank_int(card) for card in keep_cards]
+    opp_suit = stats.Card.get_suit_int(opponent_discard)
+    opp_rank = stats.Card.get_rank_int(opponent_discard)
+    if discard_suit == opp_suit and opp_suit not in keep_suits:
+        penalty += 0.015
+    if discard_rank == opp_rank and opp_rank not in keep_ranks:
+        penalty += 0.012
+    return penalty
 
 
 def update_info_penalty_from_round(player: PlayerView) -> None:
