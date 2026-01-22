@@ -61,9 +61,9 @@
 - Use adaptive bet sizing (larger vs overfolds, thinner value vs callers). (DONE)
 
 ## Phase 5: Lightweight learning experiments
-- Add a random-feature policy (ELM / random kitchen sinks) with a linear readout. (TODO)
-- Use online Hebbian updates; test Mimetic updates if activations are invertible. (TODO)
-- Keep model size small (dozens of weights) to preserve speed. (TODO)
+- Add a random-feature policy (ELM / random kitchen sinks) with a linear readout. (DONE)
+- Use online Hebbian updates; test Mimetic updates if activations are invertible. (DONE)
+- Keep model size small (dozens of weights) to preserve speed. (DONE)
 
 ## Phase 6: Evaluation and tuning
 - Use the self-play harness to evaluate every strategy change vs baseline. (DONE)
@@ -88,9 +88,9 @@ P12. Track fold frequency by bet size and street with decay. (DONE)
 P13. Track raise/call ratios and showdowns to infer range strength. (DONE)
 P14. Track discard patterns to update opponent range after discard. (DONE)
 P15. Use adaptive bet sizing (larger vs overfolds, thinner value vs callers). (DONE)
-P16. Add a random-feature policy (ELM / random kitchen sinks) with a linear readout. (TODO)
-P17. Use online Hebbian updates; test Mimetic updates if activations are invertible. (TODO)
-P18. Keep model size small (dozens of weights) to preserve speed. (TODO)
+P16. Add a random-feature policy (ELM / random kitchen sinks) with a linear readout. (DONE)
+P17. Use online Hebbian updates; test Mimetic updates if activations are invertible. (DONE)
+P18. Keep model size small (dozens of weights) to preserve speed. (DONE)
 P19. Log EV, win rate, action frequencies, and discard outcomes. (DONE)
 P20. Compare against baseline and select stable defaults. (DONE)
 P21. Tune timeouts and sampling budgets to avoid engine timeouts. (DONE)

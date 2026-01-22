@@ -1,6 +1,8 @@
 from dataclasses import dataclass, field
+import math
+import os
 import random
-from typing import Any, Iterable, Mapping, Optional, Sequence, Tuple, Dict
+from typing import Any, Iterable, Mapping, Optional, Sequence, Tuple, Dict, List
 
 import stats
 
@@ -22,6 +24,10 @@ _OPPONENT_RANGE_MODEL = {
     "by_street": {},
     "showdowns": {"wins": 0.0, "losses": 0.0},
 }
+_USE_RANDOM_POLICY = os.environ.get("NEUROPOKER_USE_RANDOM_POLICY", "0") == "1"
+_RANDOM_POLICY_LR = 0.02
+_RANDOM_POLICY_HIDDEN = 16
+_LAST_HIDDEN = None
 
 
 @dataclass(frozen=True)
@@ -70,6 +76,38 @@ class PlayerView:
     villain: ActorView
     community: Sequence[str]
     street: int
+
+
+class RandomFeaturePolicy:
+    """Random-feature policy with a linear readout."""
+
+    def __init__(self, seed: int = 0, hidden_dim: int = _RANDOM_POLICY_HIDDEN):
+        rng = random.Random(seed)
+        self.hidden_dim = hidden_dim
+        self.proj = [[rng.uniform(-1.0, 1.0) for _ in range(8)] for _ in range(hidden_dim)]
+        self.weights = [rng.uniform(-0.05, 0.05) for _ in range(hidden_dim)]
+
+    def forward(self, features: List[float]) -> List[float]:
+        hidden = []
+        for row in self.proj:
+            dot = 0.0
+            for weight, feat in zip(row, features):
+                dot += weight * feat
+            hidden.append(math.tanh(dot))
+        return hidden
+
+    def score(self, hidden: List[float]) -> float:
+        total = 0.0
+        for weight, feat in zip(self.weights, hidden):
+            total += weight * feat
+        return total
+
+    def update(self, hidden: List[float], reward: float, lr: float) -> None:
+        for idx, feat in enumerate(hidden):
+            self.weights[idx] += lr * reward * feat
+
+
+_RANDOM_POLICY = RandomFeaturePolicy(seed=7)
 
 
 def init_state(config: StrategyConfig) -> StrategyState:
@@ -267,6 +305,11 @@ def _fallback_action(player: PlayerView):
     call_margin += discard_bias
     raise_margin += range_bias
     call_margin += range_bias
+
+    if _USE_RANDOM_POLICY:
+        policy_bias = _policy_bias(player, equity, pot_odds)
+        raise_margin -= policy_bias
+        call_margin -= policy_bias
     raise_margin += texture_raise
     call_margin += texture_call
 
@@ -677,6 +720,7 @@ def update_info_penalty_from_round(player: PlayerView) -> None:
             max(_INFO_PENALTY_MIN, _INFO_PENALTY + 0.01 * opponent_strength),
         )
     _INFO_PENALTY = _apply_info_penalty_decay(_INFO_PENALTY, player)
+    _update_random_policy(player)
 
 
 def record_opponent_discard(card: str) -> None:
@@ -714,6 +758,39 @@ def _apply_info_penalty_decay(value: float, player: PlayerView) -> float:
     else:
         decay = 0.985
     return max(_INFO_PENALTY_MIN, min(_INFO_PENALTY_MAX, value * decay))
+
+
+def _policy_bias(player: PlayerView, equity: float, pot_odds: float) -> float:
+    global _LAST_HIDDEN
+    features = _policy_features(player, equity, pot_odds)
+    hidden = _RANDOM_POLICY.forward(features)
+    _LAST_HIDDEN = hidden
+    score = _RANDOM_POLICY.score(hidden)
+    return max(-0.05, min(0.05, score))
+
+
+def _policy_features(player: PlayerView, equity: float, pot_odds: float) -> List[float]:
+    pot_total = max(1, player.hero.pot_total)
+    return [
+        equity,
+        pot_odds,
+        min(1.0, player.street / 6.0),
+        min(1.0, player.hero.stack / float(pot_total)),
+        min(1.0, player.hero.continue_cost / float(pot_total)),
+        1.0 if player.hero.blind else 0.0,
+        1.0,
+        0.5,
+    ]
+
+
+def _update_random_policy(player: PlayerView) -> None:
+    global _LAST_HIDDEN
+    if not _USE_RANDOM_POLICY or _LAST_HIDDEN is None:
+        return
+    delta = getattr(player.hero, "delta", 0)
+    reward = max(-1.0, min(1.0, delta / 100.0))
+    _RANDOM_POLICY.update(_LAST_HIDDEN, reward, _RANDOM_POLICY_LR)
+    _LAST_HIDDEN = None
 
 
 def initial_opponent_range(position):
