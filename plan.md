@@ -57,8 +57,8 @@
 
 ## Phase 4: Opponent modeling
 - Track fold frequency by bet size and street with decay. (PARTIAL)
-- Track raise/call ratios and showdowns to infer range strength. (PARTIAL)
-- Track discard patterns to update opponent range after discard. (TODO)
+- Track raise/call ratios and showdowns to infer range strength. (DONE)
+- Track discard patterns to update opponent range after discard. (DONE)
 - Use adaptive bet sizing (larger vs overfolds, thinner value vs callers). (PARTIAL)
 
 ## Phase 5: Lightweight learning experiments
@@ -87,8 +87,8 @@ P9. Use discard order to condition on opponent discard (dealer advantage). (TODO
 P10. Track opponent discard tendencies and adjust (simple frequency model). (TODO)
 P11. Expand info-penalty to a learned, opponent-conditioned term. (PARTIAL)
 P12. Track fold frequency by bet size and street with decay. (TODO)
-P13. Track raise/call ratios and showdowns to infer range strength. (TODO)
-P14. Track discard patterns to update opponent range after discard. (TODO)
+P13. Track raise/call ratios and showdowns to infer range strength. (DONE)
+P14. Track discard patterns to update opponent range after discard. (DONE)
 P15. Use adaptive bet sizing (larger vs overfolds, thinner value vs callers). (TODO)
 P16. Add a random-feature policy (ELM / random kitchen sinks) with a linear readout. (TODO)
 P17. Use online Hebbian updates; test Mimetic updates if activations are invertible. (TODO)

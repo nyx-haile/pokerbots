@@ -20,6 +20,7 @@ _OPPONENT_BET_MODEL = {
 _RANGE_MODEL_DECAY = 0.99
 _OPPONENT_RANGE_MODEL = {
     "by_street": {},
+    "showdowns": {"wins": 0.0, "losses": 0.0},
 }
 
 
@@ -461,20 +462,47 @@ def fold_equity_estimate(player_id, bet_size: int, street: int, pot_total: int) 
 
 
 def record_opponent_raise(street: int) -> None:
-    bucket = _OPPONENT_RANGE_MODEL["by_street"].setdefault(street, {"raises": 0.0, "total": 0.0})
+    bucket = _OPPONENT_RANGE_MODEL["by_street"].setdefault(street, {"raises": 0.0, "calls": 0.0, "total": 0.0})
     bucket["raises"] += 1.0
     bucket["total"] += 1.0
 
 
 def record_opponent_action(street: int) -> None:
-    bucket = _OPPONENT_RANGE_MODEL["by_street"].setdefault(street, {"raises": 0.0, "total": 0.0})
+    bucket = _OPPONENT_RANGE_MODEL["by_street"].setdefault(street, {"raises": 0.0, "calls": 0.0, "total": 0.0})
     bucket["total"] += 1.0
+
+
+def record_opponent_call(street: int) -> None:
+    bucket = _OPPONENT_RANGE_MODEL["by_street"].setdefault(street, {"raises": 0.0, "calls": 0.0, "total": 0.0})
+    bucket["calls"] += 1.0
+    bucket["total"] += 1.0
+
+
+def record_opponent_showdown(win: bool) -> None:
+    key = "wins" if win else "losses"
+    _OPPONENT_RANGE_MODEL["showdowns"][key] += 1.0
 
 
 def decay_range_model() -> None:
     for bucket in _OPPONENT_RANGE_MODEL["by_street"].values():
         bucket["raises"] *= _RANGE_MODEL_DECAY
+        bucket["calls"] *= _RANGE_MODEL_DECAY
         bucket["total"] *= _RANGE_MODEL_DECAY
+    _OPPONENT_RANGE_MODEL["showdowns"]["wins"] *= _RANGE_MODEL_DECAY
+    _OPPONENT_RANGE_MODEL["showdowns"]["losses"] *= _RANGE_MODEL_DECAY
+
+
+def opponent_range_strength() -> float:
+    showdowns = _OPPONENT_RANGE_MODEL["showdowns"]
+    total = showdowns["wins"] + showdowns["losses"]
+    if total < 3:
+        return 0.0
+    return (showdowns["wins"] - showdowns["losses"]) / total
+
+
+def update_range_after_discard(range3, discarded_card):
+    record_opponent_discard(discarded_card)
+    return range3
 
 
 def _should_bluff(street: int, board_cards: Sequence[str]) -> bool:
