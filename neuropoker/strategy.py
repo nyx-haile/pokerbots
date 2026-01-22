@@ -13,6 +13,10 @@ _OPPONENT_DISCARD_MODEL = {
     "suit_counts": [0] * 4,
     "total": 0,
 }
+_BET_MODEL_DECAY = 0.99
+_OPPONENT_BET_MODEL = {
+    "by_street": {},
+}
 
 
 @dataclass(frozen=True)
@@ -257,15 +261,20 @@ def _fallback_action(player: PlayerView):
         min_raise, max_raise = getattr(player.hero, "raise_bounds", (0, 0))
         raise_threshold = pot_odds + raise_margin
         raise_cap = max(4, pot_total // 2)
+        fold_rate = _opponent_fold_rate(player.street)
         if min_raise > raise_cap or min_raise > player.hero.stack // 2:
             pass
         elif equity > raise_threshold and min_raise > 0:
             target = _raise_size(pot_total, min_raise, max_raise, equity)
+            target = _adjust_value_raise(target, min_raise, max_raise, fold_rate, equity)
             return RaiseAction(target)
         if equity < pot_odds - 0.1 and _should_bluff(player.street, board_cards):
-            target = _raise_size(pot_total, min_raise, max_raise, equity, bluff=True)
-            if target > 0:
-                return RaiseAction(target)
+            if fold_rate <= 0.3:
+                pass
+            else:
+                target = _raise_size(pot_total, min_raise, max_raise, equity, bluff=True)
+                if target > 0:
+                    return RaiseAction(target)
 
     if equity < pot_odds - call_margin and FoldAction in legal_actions:
         return FoldAction()
@@ -333,6 +342,67 @@ def _raise_size(pot_total: int, min_raise: int, max_raise: int, equity: float, b
         target = pot_total // 3
     target = max(min_raise, target)
     return min(target, max_raise)
+
+
+def _adjust_value_raise(
+    target: int,
+    min_raise: int,
+    max_raise: int,
+    fold_rate: float,
+    equity: float,
+) -> int:
+    if target <= 0:
+        return target
+    if equity < 0.6:
+        return target
+    if fold_rate >= 0.6:
+        target = int(target * 1.2)
+    elif fold_rate <= 0.3:
+        target = int(target * 0.8)
+    target = max(min_raise, target)
+    return min(target, max_raise)
+
+
+def _opponent_fold_rate(street: int) -> float:
+    bucket = _OPPONENT_BET_MODEL["by_street"].get(street)
+    if not bucket:
+        return 0.0
+    total = 0.0
+    folds = 0.0
+    for counts in bucket.values():
+        total += counts.get("fold", 0.0) + counts.get("call", 0.0)
+        folds += counts.get("fold", 0.0)
+    if total < 5:
+        return 0.0
+    return folds / total
+
+
+def record_opponent_bet_response(street: int, bet_size: int, pot_total: int, folded: bool) -> None:
+    street_bucket = _OPPONENT_BET_MODEL["by_street"].setdefault(street, {})
+    bucket_key = _bet_size_bucket(bet_size, pot_total)
+    counts = street_bucket.setdefault(bucket_key, {"fold": 0.0, "call": 0.0})
+    if folded:
+        counts["fold"] += 1.0
+    else:
+        counts["call"] += 1.0
+
+
+def decay_bet_model() -> None:
+    by_street = _OPPONENT_BET_MODEL["by_street"]
+    for street, bucket in by_street.items():
+        for counts in bucket.values():
+            counts["fold"] *= _BET_MODEL_DECAY
+            counts["call"] *= _BET_MODEL_DECAY
+
+
+def _bet_size_bucket(bet_size: int, pot_total: int) -> str:
+    pot = max(1, pot_total)
+    ratio = bet_size / float(pot)
+    if ratio <= 0.5:
+        return "small"
+    if ratio <= 1.0:
+        return "medium"
+    return "large"
 
 
 def _should_bluff(street: int, board_cards: Sequence[str]) -> bool:

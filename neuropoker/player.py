@@ -35,6 +35,10 @@ class Player(Bot):
         self._logged_start = False
         self._last_board_len = 0
         self._pending_hero_discard = None
+        self._last_bet_size = None
+        self._last_bet_pot = None
+        self._last_bet_street = None
+        self._last_aggressor = False
         self._log(f"init python={sys.version.split()[0]}")
         self._log(f"cwd={os.getcwd()}")
         self._log(f"executable={sys.executable}")
@@ -84,6 +88,10 @@ class Player(Bot):
         self.villain.blind = not self.hero.blind
         self._last_board_len = len(round_state.board)
         self._pending_hero_discard = None
+        self._last_bet_size = None
+        self._last_bet_pot = None
+        self._last_bet_street = None
+        self._last_aggressor = False
         if self.round_num % 100 == 1:
             self._log(f"round={self.round_num} bankroll={self.hero.bankroll} clock={self.game_clock:.2f}")
 
@@ -111,6 +119,23 @@ class Player(Bot):
 
         strategy.update_info_penalty_from_round(self)
         strategy.decay_discard_model()
+        strategy.decay_bet_model()
+        if self._last_aggressor and self._last_bet_size is not None:
+            villain_revealed = bool(self.villain.hand)
+            if self.hero.delta > 0 and not villain_revealed:
+                strategy.record_opponent_bet_response(
+                    self._last_bet_street or 0,
+                    self._last_bet_size,
+                    self._last_bet_pot or 1,
+                    True,
+                )
+            elif villain_revealed:
+                strategy.record_opponent_bet_response(
+                    self._last_bet_street or 0,
+                    self._last_bet_size,
+                    self._last_bet_pot or 1,
+                    False,
+                )
         if self.round_num % 100 == 1:
             self._log(f"round_over={self.round_num} delta={self.hero.delta}")
 
@@ -179,6 +204,9 @@ class Player(Bot):
             self.hero.raise_bounds = round_state.raise_bounds()
             self.villain.raise_bounds = self.hero.raise_bounds
 
+        if self.hero.continue_cost > 0:
+            self._last_aggressor = False
+
         # Only use DiscardAction if it's in legal_actions (which already checks street)
         # legal_actions() returns DiscardAction only when street is 2 or 3
 
@@ -200,6 +228,11 @@ class Player(Bot):
                 self._pending_hero_discard = self.hero.hand[action.card]
             except Exception:
                 self._pending_hero_discard = None
+        if isinstance(action, RaiseAction):
+            self._last_bet_size = action.amount
+            self._last_bet_pot = self.hero.pot_total
+            self._last_bet_street = self.street
+            self._last_aggressor = True
         return action
         #export computation to strategy engine
 
