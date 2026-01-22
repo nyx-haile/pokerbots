@@ -3,20 +3,56 @@ import os
 import random
 import time
 import multiprocessing
-
-from deuces import Card, Deck, Evaluator
 from itertools import combinations
 from functools import lru_cache
 try:
     from pokerstove import CardSet as cs
 except ImportError:
     cs = None
+try:
+    import pkrbot
+except ImportError:
+    pkrbot = None
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
-_BACKEND = os.environ.get("NEUROPOKER_EVAL_BACKEND", "auto").lower()
-_USE_POKERSTOVE = _BACKEND in ("auto", "pokerstove") and cs is not None
+_BACKEND = os.environ.get("NEUROPOKER_EVAL_BACKEND", "pkrbot").lower()
+_USE_PKRBOT = _BACKEND in ("auto", "pkrbot") and pkrbot is not None
+_USE_POKERSTOVE = (
+    _BACKEND in ("auto", "pokerstove")
+    and cs is not None
+    and not _USE_PKRBOT
+)
 
-evaluator = Evaluator()
+_RANKS = "23456789TJQKA"
+_SUITS = "cdhs"
+_SUIT_TO_INT = {"s": 1, "h": 2, "d": 4, "c": 8}
+_FULL_DECK = [rank + suit for rank in _RANKS for suit in _SUITS]
+
+
+def _card_to_str(card) -> str:
+    if isinstance(card, str):
+        return card
+    if pkrbot is not None and isinstance(card, pkrbot.Card):
+        return str(card)
+    raise ValueError(f"Unsupported card type: {type(card)}")
+
+
+class Card:
+    @staticmethod
+    def get_rank_int(card) -> int:
+        card_str = _card_to_str(card)
+        rank_char = card_str[0].upper()
+        return _RANKS.index(rank_char)
+
+    @staticmethod
+    def get_suit_int(card) -> int:
+        card_str = _card_to_str(card)
+        suit_char = card_str[1].lower()
+        return _SUIT_TO_INT[suit_char]
+
+    @staticmethod
+    def int_to_str(card) -> str:
+        return _card_to_str(card)
 
 
 def _env_float(name: str, default: float) -> float:
@@ -45,78 +81,121 @@ class DeckEmptyException(Exception):
 
 def convert(card: str) -> int:
     """
-    converts cards from string format ('Qh')
-    into integer format as used by deuces.
+    normalizes cards to string format ('Qh').
     """
-    return Card.new(card)
+    return _card_to_str(card)
 
 def _ensure_int_cards(cards):
     if not cards:
         return []
-    if isinstance(cards[0], int):
-        return list(cards)
-    return [convert(card) for card in cards]
+    return [_card_to_str(card) for card in cards]
 
 def _ensure_str_cards(cards):
     if not cards:
         return []
-    if isinstance(cards[0], str):
-        return list(cards)
-    return [Card.int_to_str(card) for card in cards]
+    return [_card_to_str(card) for card in cards]
 
-def preflop_strength(hole_cards: Sequence[Union[str, int]]) -> float:
-    """
-    Fast heuristic for 3-card preflop strength in Toss or Hold'em.
-    Returns a value in [0, 1].
-    """
-    cards = _ensure_int_cards(list(hole_cards))
+_CHEN_HIGH = {
+    14: 10.0,
+    13: 8.0,
+    12: 7.0,
+    11: 6.0,
+    10: 5.0,
+    9: 4.5,
+    8: 4.0,
+    7: 3.5,
+    6: 3.0,
+    5: 2.5,
+    4: 2.0,
+    3: 1.5,
+    2: 1.0,
+}
+
+
+def _chen_score(rank_high: int, rank_low: int, suited: bool) -> float:
+    score = _CHEN_HIGH.get(rank_high, 0.0)
+    if rank_high == rank_low:
+        score = max(5.0, score * 2.0)
+    if suited and rank_high != rank_low:
+        score += 2.0
+    gap = rank_high - rank_low - 1
+    if gap == 1:
+        score -= 1.0
+    elif gap == 2:
+        score -= 2.0
+    elif gap == 3:
+        score -= 4.0
+    elif gap >= 4:
+        score -= 5.0
+    if gap <= 1 and rank_high <= 12 and rank_high != rank_low:
+        score += 1.0
+    if rank_high <= 5 and gap <= 1 and rank_high != rank_low:
+        score += 0.5
+    return max(0.0, score)
+
+
+@lru_cache(maxsize=200_000)
+def _preflop_strength_cached(cards_tuple: Tuple[int, ...]) -> float:
+    cards = list(cards_tuple)
     if len(cards) != 3:
         return 0.5
 
     ranks = [Card.get_rank_int(card) + 2 for card in cards]
     suits = [Card.get_suit_int(card) for card in cards]
-    ranks_sorted = sorted(ranks, reverse=True)
     rank_counts = {rank: ranks.count(rank) for rank in ranks}
-
-    base = sum(ranks_sorted) / (3 * 14)
-    pair_bonus = 0.0
-    if 3 in rank_counts.values():
-        pair_bonus = 0.25
-    elif 2 in rank_counts.values():
-        pair_bonus = 0.12
-
-    suited_bonus = 0.0
     suit_counts = {suit: suits.count(suit) for suit in suits}
+
+    scores = []
+    pairs = [(0, 1), (0, 2), (1, 2)]
+    for i, j in pairs:
+        rank_high = max(ranks[i], ranks[j])
+        rank_low = min(ranks[i], ranks[j])
+        suited = suits[i] == suits[j]
+        scores.append(_chen_score(rank_high, rank_low, suited))
+
+    scores.sort(reverse=True)
+    base = scores[0] + 0.35 * scores[1] + 0.10 * scores[2]
+
+    if 3 in rank_counts.values():
+        base += 3.0
+    elif 2 in rank_counts.values():
+        kicker = max(rank for rank, count in rank_counts.items() if count == 1)
+        base += (kicker / 14.0) * 1.2
+
     if 3 in suit_counts.values():
-        suited_bonus = 0.08
+        base += 1.0
     elif 2 in suit_counts.values():
-        suited_bonus = 0.04
+        base += 0.5
 
-    gaps = sorted(ranks_sorted)
-    connected_bonus = 0.0
-    if gaps[2] - gaps[0] <= 4:
-        connected_bonus = 0.05
-    elif gaps[2] - gaps[1] <= 2 or gaps[1] - gaps[0] <= 2:
-        connected_bonus = 0.02
+    span = max(ranks) - min(ranks)
+    if span <= 4:
+        base += 1.0
+    elif span <= 6:
+        base += 0.5
 
-    high_bonus = sum(0.02 for rank in ranks_sorted if rank >= 11)
-
-    strength = base + pair_bonus + suited_bonus + connected_bonus + high_bonus
+    strength = base / 32.0
     return max(0.0, min(1.0, strength))
 
-def _deuces_best_eval(cards):
-    best = None
-    for combo in combinations(cards, 5):
-        rank = evaluator.evaluate(list(combo), [])
-        if best is None or rank < best:
-            best = rank
-    return best
+
+def preflop_strength(hole_cards: Sequence[Union[str, int]]) -> float:
+    """
+    Fast, cached heuristic for 3-card preflop strength in Toss or Hold'em.
+    Uses a Chen-style two-card score for each pair plus 3-card synergy bonuses.
+    Returns a value in [0, 1].
+    """
+    cards = _ensure_int_cards(list(hole_cards))
+    cards.sort()
+    return _preflop_strength_cached(tuple(cards))
 
 def _pokerstove_best_eval(cards):
     str_cards = _ensure_str_cards(cards)
     if len(cards) > 7:
         return eval_best_8(str_cards)
     return cs("".join(str_cards)).evaluateHigh().code()
+
+def _pkrbot_best_eval(cards):
+    str_cards = _ensure_str_cards(cards)
+    return pkrbot.evaluate([pkrbot.Card(card) for card in str_cards])
 
 def eval_best_8(cards8_str):
     # cards8_str is a list of card str, eg ['Ah', 'Ks', '7h']
@@ -132,9 +211,11 @@ def eval_best_8(cards8_str):
 @lru_cache(maxsize=400_000)
 def _evaluate_best_cached(cards_tuple: Tuple[int, ...]) -> int:
     cards = list(cards_tuple)
+    if _USE_PKRBOT:
+        return _pkrbot_best_eval(cards)
     if _USE_POKERSTOVE:
         return _pokerstove_best_eval(_ensure_str_cards(cards))
-    return _deuces_best_eval(cards)
+    raise RuntimeError("No supported evaluator available (pkrbot or pokerstove).")
 
 
 def evaluate_best(board, hand):
@@ -142,7 +223,7 @@ def evaluate_best(board, hand):
     return _evaluate_best_cached(tuple(cards))
 
 def compare_evals(hero_rank, villain_rank):
-    if _USE_POKERSTOVE:
+    if _USE_PKRBOT or _USE_POKERSTOVE:
         if hero_rank > villain_rank:
             return 1
         if hero_rank < villain_rank:
@@ -171,22 +252,41 @@ def _enumerate_discard_equity(hole, board, deck, remaining_cards):
     stats = {discard: {"wins": 0, "losses": 0, "ties": 0} for discard in hole}
     hole_variants = {discard: [card for card in hole if card != discard] for discard in hole}
     deck_set = set(deck)
+    opp_discard_pending = 1 if len(board) == 2 else 0
+    opp_hand_size = 3 if opp_discard_pending else 2
 
     for discard, my_hole in hole_variants.items():
         new_board = board + [discard]
-        for opp_hand in combinations(deck_set, 2):
-            remaining_deck = deck_set - set(opp_hand)
-            for board_fill in combinations(remaining_deck, remaining_cards):
-                final_board = new_board + list(board_fill)
-                hero_rank = evaluate_best(final_board, my_hole)
-                villain_rank = evaluate_best(final_board, list(opp_hand))
-                result = compare_evals(hero_rank, villain_rank)
-                if result > 0:
-                    stats[discard]["wins"] += 1
-                elif result < 0:
-                    stats[discard]["losses"] += 1
-                else:
-                    stats[discard]["ties"] += 1
+        if opp_hand_size == 3:
+            for opp_hand in combinations(deck_set, 3):
+                opp_discard = _choose_opp_discard(opp_hand)
+                remaining_hand = _remove_one(list(opp_hand), opp_discard)
+                remaining_deck = deck_set - set(opp_hand)
+                for board_fill in combinations(remaining_deck, remaining_cards):
+                    final_board = new_board + [opp_discard] + list(board_fill)
+                    hero_rank = evaluate_best(final_board, my_hole)
+                    villain_rank = evaluate_best(final_board, list(remaining_hand))
+                    result = compare_evals(hero_rank, villain_rank)
+                    if result > 0:
+                        stats[discard]["wins"] += 1
+                    elif result < 0:
+                        stats[discard]["losses"] += 1
+                    else:
+                        stats[discard]["ties"] += 1
+        else:
+            for opp_hand in combinations(deck_set, 2):
+                remaining_deck = deck_set - set(opp_hand)
+                for board_fill in combinations(remaining_deck, remaining_cards):
+                    final_board = new_board + list(board_fill)
+                    hero_rank = evaluate_best(final_board, my_hole)
+                    villain_rank = evaluate_best(final_board, list(opp_hand))
+                    result = compare_evals(hero_rank, villain_rank)
+                    if result > 0:
+                        stats[discard]["wins"] += 1
+                    elif result < 0:
+                        stats[discard]["losses"] += 1
+                    else:
+                        stats[discard]["ties"] += 1
 
     equities = []
     for discard in hole:
@@ -251,11 +351,13 @@ def _discard_equity_impl(
     return_metadata: bool = False,
 ) -> tuple:
     known = set(hole + board)
-    full_deck = Deck().cards
+    full_deck = list(_FULL_DECK)
     deck = [card for card in full_deck if card not in known]
 
-    remaining_cards = max(0, 6 - len(board) - 1)
-    needed = 2 + remaining_cards
+    opp_discard_pending = 1 if len(board) == 2 else 0
+    remaining_cards = max(0, 6 - len(board) - 1 - opp_discard_pending)
+    opp_hand_size = 3 if opp_discard_pending else 2
+    needed = opp_hand_size + remaining_cards
     if needed > len(deck):
         return _enumerate_discard_equity(hole, board, deck, remaining_cards)
 
@@ -278,11 +380,20 @@ def _discard_equity_impl(
         if max_seconds > 0 and time.perf_counter() - start_time >= max_seconds:
             break
         sample_cards = rng.sample(deck, needed)
-        opp_hand = sample_cards[:2]
-        board_fill = sample_cards[2:]
+        if opp_hand_size == 3:
+            opp_hand_full = sample_cards[:3]
+            opp_discard = _choose_opp_discard(opp_hand_full)
+            opp_hand = _remove_one(list(opp_hand_full), opp_discard)
+            board_fill = sample_cards[3:]
+        else:
+            opp_hand = sample_cards[:2]
+            board_fill = sample_cards[2:]
 
         for discard, my_hole in hole_variants.items():
-            final_board = board + [discard] + board_fill
+            final_board = board + [discard]
+            if opp_hand_size == 3:
+                final_board.append(opp_discard)
+            final_board.extend(board_fill)
             hero_rank = evaluate_best(final_board, my_hole)
             villain_rank = evaluate_best(final_board, list(opp_hand))
             result = compare_evals(hero_rank, villain_rank)
@@ -314,6 +425,28 @@ def _discard_equity_impl(
     if return_metadata:
         return tuple(equities), metadata
     return tuple(equities)
+
+
+def _choose_opp_discard(cards: Iterable[str]) -> str:
+    best = None
+    best_rank = None
+    for card in cards:
+        rank = Card.get_rank_int(card)
+        if best is None or rank < best_rank:
+            best = card
+            best_rank = rank
+    return best
+
+
+def _remove_one(cards: List[str], card: str) -> List[str]:
+    removed = False
+    remaining = []
+    for item in cards:
+        if not removed and item == card:
+            removed = True
+            continue
+        remaining.append(item)
+    return remaining
 
 
 def estimate_equity(
@@ -358,7 +491,7 @@ def _estimate_equity_cached(
     board_int = list(board_tuple)
     start_time = time.perf_counter()
     known = hero_int + list(board_int)
-    deck = [card for card in Deck().cards if card not in known]
+    deck = [card for card in _FULL_DECK if card not in known]
 
     if len(hero_int) == 3 and len(board_int) < 2:
         total = 0.0

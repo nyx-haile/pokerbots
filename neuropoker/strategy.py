@@ -234,6 +234,7 @@ def _fallback_action(player: PlayerView):
             equities,
             discard_visible=player.hero.blind,
             opponent_discard=opponent_discard,
+            board_cards=board_cards,
         )
         player.hero.last_discard = hero_hand[best_i]
         player.hero.last_discard_visible = player.hero.blind
@@ -261,10 +262,13 @@ def _fallback_action(player: PlayerView):
     call_margin = _call_margin_by_street(player.street)
     discard_bias = _opponent_discard_bias(player.street)
     range_bias = _opponent_range_bias(player.street)
+    texture_raise, texture_call, raise_cap_mult = _board_texture_adjustments(board_cards)
     raise_margin += discard_bias
     call_margin += discard_bias
     raise_margin += range_bias
     call_margin += range_bias
+    raise_margin += texture_raise
+    call_margin += texture_call
 
     if player.street > 0:
         raise_threshold = pot_odds + raise_margin
@@ -284,7 +288,7 @@ def _fallback_action(player: PlayerView):
     if RaiseAction in legal_actions:
         min_raise, max_raise = getattr(player.hero, "raise_bounds", (0, 0))
         raise_threshold = pot_odds + raise_margin
-        raise_cap = max(4, pot_total // 2)
+        raise_cap = max(4, int(pot_total // 2 * raise_cap_mult))
         fold_rate = fold_equity_estimate(None, min_raise, player.street, pot_total)
         if min_raise > raise_cap or min_raise > player.hero.stack // 2:
             pass
@@ -330,6 +334,17 @@ def _call_margin_by_street(street: int) -> float:
     if street <= 4:
         return 0.05
     return 0.06
+
+
+def _board_texture_adjustments(board_cards: Sequence[str]) -> Tuple[float, float, float]:
+    if not board_cards:
+        return 0.0, 0.0, 1.0
+    board_int = stats._ensure_int_cards(list(board_cards))
+    paired = _board_is_paired(board_int)
+    flushy = _board_is_flushy(board_int)
+    if paired or flushy:
+        return 0.03, 0.02, 0.7
+    return 0.0, 0.0, 1.0
 
 
 def _opponent_discard_bias(street: int) -> float:
@@ -571,6 +586,7 @@ def _select_discard_asymmetric(
     equities: Sequence[float],
     discard_visible: bool,
     opponent_discard: Optional[str] = None,
+    board_cards: Optional[Sequence[str]] = None,
 ) -> int:
     if not equities:
         return 0
@@ -586,12 +602,30 @@ def _select_discard_asymmetric(
     for idx, equity in enumerate(equities):
         rank = stats.Card.get_rank_int(cards_int[idx]) + 2
         score = equity - info_penalty * (rank / 14)
+        if board_cards is not None:
+            score -= _discard_externality_penalty(board_cards, cards_int[idx])
         if opponent_int is not None:
             discard_card = cards_int[idx]
             keep_cards = [card for i, card in enumerate(cards_int) if i != idx]
             score -= _discard_order_penalty(keep_cards, discard_card, opponent_int)
         scores.append(score)
     return max(range(len(scores)), key=scores.__getitem__)
+
+
+def _discard_externality_penalty(board_cards: Sequence[str], discard_card: int) -> float:
+    board_int = stats._ensure_int_cards(list(board_cards))
+    if not board_int:
+        return 0.0
+    ranks = [stats.Card.get_rank_int(card) for card in board_int]
+    suits = [stats.Card.get_suit_int(card) for card in board_int]
+    discard_rank = stats.Card.get_rank_int(discard_card)
+    discard_suit = stats.Card.get_suit_int(discard_card)
+    penalty = 0.0
+    if discard_rank in ranks:
+        penalty += 0.012
+    if suits.count(discard_suit) >= 2:
+        penalty += 0.015
+    return penalty
 
 
 def _discard_order_penalty(
@@ -630,6 +664,12 @@ def update_info_penalty_from_round(player: PlayerView) -> None:
         _INFO_PENALTY = min(_INFO_PENALTY_MAX, _INFO_PENALTY + 0.01 * strength)
     elif delta > 0:
         _INFO_PENALTY = max(_INFO_PENALTY_MIN, _INFO_PENALTY - 0.005 * strength)
+    opponent_strength = opponent_range_strength()
+    if opponent_strength:
+        _INFO_PENALTY = min(
+            _INFO_PENALTY_MAX,
+            max(_INFO_PENALTY_MIN, _INFO_PENALTY + 0.01 * opponent_strength),
+        )
     _INFO_PENALTY = _apply_info_penalty_decay(_INFO_PENALTY, player)
 
 
