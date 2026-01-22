@@ -261,7 +261,7 @@ def _fallback_action(player: PlayerView):
         min_raise, max_raise = getattr(player.hero, "raise_bounds", (0, 0))
         raise_threshold = pot_odds + raise_margin
         raise_cap = max(4, pot_total // 2)
-        fold_rate = _opponent_fold_rate(player.street)
+        fold_rate = fold_equity_estimate(None, min_raise, player.street, pot_total)
         if min_raise > raise_cap or min_raise > player.hero.stack // 2:
             pass
         elif equity > raise_threshold and min_raise > 0:
@@ -363,15 +363,20 @@ def _adjust_value_raise(
     return min(target, max_raise)
 
 
-def _opponent_fold_rate(street: int) -> float:
+def _opponent_fold_rate(street: int, bucket_key: Optional[str]) -> float:
     bucket = _OPPONENT_BET_MODEL["by_street"].get(street)
     if not bucket:
         return 0.0
-    total = 0.0
-    folds = 0.0
-    for counts in bucket.values():
-        total += counts.get("fold", 0.0) + counts.get("call", 0.0)
-        folds += counts.get("fold", 0.0)
+    if bucket_key is None:
+        total = 0.0
+        folds = 0.0
+        for counts in bucket.values():
+            total += counts.get("fold", 0.0) + counts.get("call", 0.0)
+            folds += counts.get("fold", 0.0)
+    else:
+        counts = bucket.get(bucket_key, {})
+        total = counts.get("fold", 0.0) + counts.get("call", 0.0)
+        folds = counts.get("fold", 0.0)
     if total < 5:
         return 0.0
     return folds / total
@@ -403,6 +408,15 @@ def _bet_size_bucket(bet_size: int, pot_total: int) -> str:
     if ratio <= 1.0:
         return "medium"
     return "large"
+
+
+def fold_equity_estimate(player_id, bet_size: int, street: int, pot_total: int) -> float:
+    """Estimate fold probability given bet size and street using a decayed model."""
+    bucket_key = _bet_size_bucket(bet_size, pot_total)
+    fold_rate = _opponent_fold_rate(street, bucket_key)
+    if fold_rate > 0.0:
+        return fold_rate
+    return _opponent_fold_rate(street, None)
 
 
 def _should_bluff(street: int, board_cards: Sequence[str]) -> bool:

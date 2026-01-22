@@ -56,7 +56,7 @@
 - Expand info-penalty to a learned, opponent-conditioned term. (PARTIAL)
 
 ## Phase 4: Opponent modeling
-- Track fold frequency by bet size and street with decay. (TODO)
+- Track fold frequency by bet size and street with decay. (PARTIAL)
 - Track raise/call ratios and showdowns to infer range strength. (TODO)
 - Track discard patterns to update opponent range after discard. (TODO)
 - Use adaptive bet sizing (larger vs overfolds, thinner value vs callers). (PARTIAL)
