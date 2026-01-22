@@ -22,10 +22,10 @@
 - No self-play regression harness yet; evaluation is ad hoc.
 
 ## Phase 0: Self-play regression harness (Priority 0)
-- Build an engine-driven match runner that spawns two bots as separate processes (TODO).
-- Add deterministic seed control for reproducible runs; log the seed per match (TODO).
-- Use seat swaps or duplicate matches to reduce variance (TODO).
-- Capture gamelog + bot stdout/stderr; aggregate EV/hand, win rate, and variance (TODO).
+- Build an engine-driven match runner that spawns two bots as separate processes (DONE).
+- Add deterministic seed control for reproducible runs; log the seed per match (DONE).
+- Use seat swaps or duplicate matches to reduce variance (DONE).
+- Capture gamelog + bot stdout/stderr; aggregate EV/hand, win rate, and variance (PARTIAL).
 - Enforce timeouts and handle crashes as forfeits to keep runs going (TODO).
 - Compare current bot vs previous versions and fixed baselines (TODO).
 
@@ -33,6 +33,15 @@
 - Ensure cp37 PokerStove wheel builds and installs on the server (offline install via scripts/ensure_pokerstove.py). (DONE)
 - Verify Deuces fallback is correct and fast enough if PokerStove is missing. (PARTIAL)
 - Review discard-equity simulations to cover opponent discard and future board cards; update notes when modeling assumptions change. (PARTIAL)
+- Audit all bots for scrimmage server hardware constraints (single CPU core, no GPU) and remove unsupported assumptions. (TODO)
+- Cap thread usage and disable GPU-optional code paths where applicable (e.g., set OMP/MKL/BLAS thread caps, skip GPU imports). (TODO)
+
+### Server compliance checklist (per file)
+- `neuropoker/player.py`: ensure no multi-process spawns; set conservative runtime caps for single-core CPU. (TODO)
+- `neuropoker/strategy.py`: avoid heavy loops per decision; add early exits/low-sample fallbacks for single-core runtime. (TODO)
+- `neuropoker/stats.py`: enforce thread caps for BLAS/OpenMP backends; keep CPU-only eval path. (TODO)
+- `neuropoker/scripts/ensure_pokerstove.py`: verify wheel install path works offline and is CPU-only. (TODO)
+- `engine-2026/config.py`: confirm bot configs do not assume multi-core or GPU resources. (TODO)
 
 ## Phase 2: Core decision model
 - Strengthen preflop with a tuned 3-card LUT or bucketed heuristic. (DONE)
@@ -68,6 +77,7 @@ P0. Build self-play regression harness (engine-driven process isolation, determi
 P1. Ensure cp37 PokerStove wheel builds and installs on the server (baseline correctness/speed). (DONE)
 P2. Verify Deuces fallback is correct and fast enough if PokerStove is missing. (PARTIAL)
 P3. Review discard-equity simulations to cover opponent discard and future board cards. (PARTIAL)
+P3.5. Update all bots to comply with server hardware constraints (single CPU core, no GPU) and enforce thread caps. (TODO)
 P4. Strengthen preflop with a tuned 3-card LUT or bucketed heuristic. (DONE)
 P5. Tighten value thresholds for post-discard play with 6-card boards. (TODO)
 P6. Add board-texture-aware value betting and pot control. (PARTIAL)
