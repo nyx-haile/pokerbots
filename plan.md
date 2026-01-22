@@ -67,9 +67,9 @@
 - Keep model size small (dozens of weights) to preserve speed. (TODO)
 
 ## Phase 6: Evaluation and tuning
-- Use the self-play harness to evaluate every strategy change vs baseline. (TODO)
-- Log EV, win rate, action frequencies, and discard outcomes. (TODO)
-- Compare against baseline and select stable defaults. (TODO)
+- Use the self-play harness to evaluate every strategy change vs baseline. (PARTIAL)
+- Log EV, win rate, action frequencies, and discard outcomes. (PARTIAL)
+- Compare against baseline and select stable defaults. (PARTIAL)
 - Tune timeouts and sampling budgets to avoid engine timeouts. (TODO)
 
 ## Priority Ranking (Highest to Lowest)
