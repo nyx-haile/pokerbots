@@ -17,6 +17,7 @@ AWARD_RE = re.compile(r"^(?P<name>.+) awarded (?P<delta>-?\d+)")
 ACTION_RE = re.compile(r"^(?P<name>.+?) (?P<action>folds|calls|checks|raises to|bets|discards)\b")
 DISCARD_RE = re.compile(r"^(?P<name>.+) discards (?P<card>\S+)")
 SEED_RE = re.compile(r"^Seed: (?P<seed>.+)$")
+STREET_RE = re.compile(r"^(?P<street>Flop|Discard 1|Discard 2|Turn|River) ")
 
 
 def _init_player_stats(name):
@@ -33,6 +34,56 @@ def _init_player_stats(name):
             "raises": 0,
             "bets": 0,
             "discards": 0,
+        },
+        "actions_by_street": {
+            "Preflop": {
+                "folds": 0,
+                "calls": 0,
+                "checks": 0,
+                "raises": 0,
+                "bets": 0,
+                "discards": 0,
+            },
+            "Flop": {
+                "folds": 0,
+                "calls": 0,
+                "checks": 0,
+                "raises": 0,
+                "bets": 0,
+                "discards": 0,
+            },
+            "Discard 1": {
+                "folds": 0,
+                "calls": 0,
+                "checks": 0,
+                "raises": 0,
+                "bets": 0,
+                "discards": 0,
+            },
+            "Discard 2": {
+                "folds": 0,
+                "calls": 0,
+                "checks": 0,
+                "raises": 0,
+                "bets": 0,
+                "discards": 0,
+            },
+            "Turn": {
+                "folds": 0,
+                "calls": 0,
+                "checks": 0,
+                "raises": 0,
+                "bets": 0,
+                "discards": 0,
+            },
+            "River": {
+                "folds": 0,
+                "calls": 0,
+                "checks": 0,
+                "raises": 0,
+                "bets": 0,
+                "discards": 0,
+            },
         },
         "discard_cards": {},
     }
@@ -53,6 +104,23 @@ def _update_action(stats, action):
         stats["actions"]["discards"] += 1
 
 
+def _update_action_by_street(stats, action, street):
+    if street not in stats["actions_by_street"]:
+        return
+    if action == "raises to":
+        stats["actions_by_street"][street]["raises"] += 1
+    elif action == "bets":
+        stats["actions_by_street"][street]["bets"] += 1
+    elif action == "folds":
+        stats["actions_by_street"][street]["folds"] += 1
+    elif action == "calls":
+        stats["actions_by_street"][street]["calls"] += 1
+    elif action == "checks":
+        stats["actions_by_street"][street]["checks"] += 1
+    elif action == "discards":
+        stats["actions_by_street"][street]["discards"] += 1
+
+
 def parse_gamelog(path):
     if not os.path.exists(path):
         raise SystemExit("gamelog not found: %s" % path)
@@ -65,12 +133,17 @@ def parse_gamelog(path):
     stats = {}
     round_awards = {}
 
+    current_street = "Preflop"
     for line in lines:
         if not line:
             continue
         seed_match = SEED_RE.match(line)
         if seed_match:
             seed = seed_match.group("seed")
+            continue
+        street_match = STREET_RE.match(line)
+        if street_match:
+            current_street = street_match.group("street")
             continue
         round_match = ROUND_RE.match(line)
         if round_match:
@@ -81,6 +154,7 @@ def parse_gamelog(path):
                 stats[p1] = _init_player_stats(p1)
                 stats[p2] = _init_player_stats(p2)
             round_awards = {}
+            current_street = "Preflop"
             continue
         award_match = AWARD_RE.match(line)
         if award_match:
@@ -104,6 +178,7 @@ def parse_gamelog(path):
             action = action_match.group("action")
             if name in stats:
                 _update_action(stats[name], action)
+                _update_action_by_street(stats[name], action, current_street)
             if action == "discards":
                 discard_match = DISCARD_RE.match(line)
                 if discard_match:
