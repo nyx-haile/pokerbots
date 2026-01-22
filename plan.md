@@ -52,7 +52,7 @@
 ## Phase 3: Discard intelligence
 - Compute self-equity and board-externality for each discard. (PARTIAL)
 - Use discard order: as dealer, condition on opponent discard to adjust. (TODO)
-- Track opponent discard tendencies and adjust (simple frequency model). (TODO)
+- Track opponent discard tendencies and adjust (simple frequency model). (DONE)
 - Expand info-penalty to a learned, opponent-conditioned term. (PARTIAL)
 
 ## Phase 4: Opponent modeling
