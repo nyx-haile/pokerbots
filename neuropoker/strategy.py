@@ -912,11 +912,6 @@ def bet_size_likelihood(player_id, street, hand_strength_bucket):
     raise NotImplementedError
 
 
-def fold_equity_estimate(player_id, bet_size, street):
-    """
-    Estimate probability opponent folds to a bet of given size on a street.
-    """
-    raise NotImplementedError
 
 
 def update_player_model(player_id, outcome):
