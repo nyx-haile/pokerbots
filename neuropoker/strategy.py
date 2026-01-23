@@ -403,6 +403,7 @@ def _preflop_open_decision(
     max_raise: int,
     pot_total: int,
 ):
+    from skeleton.actions import CallAction, RaiseAction
     roll = _preflop_roll(player)
     if RaiseAction in legal_actions:
         if equity >= 0.7:
@@ -807,8 +808,11 @@ def record_opponent_discard(card: str) -> None:
     card_int = stats._ensure_int_cards([card])[0]
     rank = stats.Card.get_rank_int(card_int)
     suit = stats.Card.get_suit_int(card_int)
+    suit_index = {1: 0, 2: 1, 4: 2, 8: 3}.get(suit)
+    if suit_index is None:
+        return
     _OPPONENT_DISCARD_MODEL["rank_counts"][rank] += 1
-    _OPPONENT_DISCARD_MODEL["suit_counts"][suit] += 1
+    _OPPONENT_DISCARD_MODEL["suit_counts"][suit_index] += 1
     _OPPONENT_DISCARD_MODEL["total"] += 1
 
 
