@@ -59,11 +59,7 @@ class Player(Bot):
         self._log(f"sys.path[0:3]={sys.path[:3]}")
         self._log(f"env.PYTHONPATH={os.environ.get('PYTHONPATH')}")
         self._log(f"env.NEUROPOKER_EVAL_BACKEND={os.environ.get('NEUROPOKER_EVAL_BACKEND')}")
-        try:
-            import pokerstove  # noqa: F401
-            self._log("pokerstove=ok")
-        except Exception as exc:
-            self._log(f"pokerstove=missing ({exc})")
+
         try:
             import stats  # noqa: F401
             self._log("stats=ok")
@@ -109,6 +105,7 @@ class Player(Bot):
         self._last_villain_pip = round_state.pips[1 - active]
         self._last_street_seen = round_state.street
         self._last_hero_pip = round_state.pips[active]
+        strategy.begin_round(self)
         if self.round_num % 100 == 1:
             self._log(f"round={self.round_num} bankroll={self.hero.bankroll} clock={self.game_clock:.2f}")
 
@@ -135,6 +132,7 @@ class Player(Bot):
         self.villain.hand = self.previous_state.hands[1-active] # opponent's cards or [] if not revealed
 
         strategy.update_info_penalty_from_round(self)
+        strategy.update_policy_from_round(self)
         strategy.decay_discard_model()
         strategy.decay_bet_model()
         strategy.decay_range_model()
@@ -250,13 +248,9 @@ class Player(Bot):
         try:
             action = strategy.play(self)
         except Exception:
-            self._log("strategy error:\n" + traceback.format_exc())
-            if CheckAction in self.hero.legal_actions:
-                action = CheckAction()
-            elif CallAction in self.hero.legal_actions:
-                action = CallAction()
             else:
                 action = FoldAction()
+
         if isinstance(action, DiscardAction):
             try:
                 self._pending_hero_discard = self.hero.hand[action.card]
@@ -285,32 +279,6 @@ class Player(Bot):
             self._last_aggressor = True
         return action
         #export computation to strategy engine
-
-        """
-        if DiscardAction in legal_actions:
-            # use stats discard equity calc
-            board_int = [convert(card) for card in board_cards]
-            hole_int = [convert(card) for card in my_cards]
-            hand_vals = discard_equity(hole_int, board_int)
-            best_i = max(range(len(hand_vals)), key=hand_vals.__getitem__)
-            return DiscardAction(best_i)
-
-        if RaiseAction in legal_actions:
-            # the smallest and largest numbers of chips for a legal bet/raise
-            min_raise, max_raise = round_state.raise_bounds()
-            min_cost = min_raise - my_pip  # the cost of a minimum bet/raise
-            max_cost = max_raise - my_pip  # the cost of a maximum bet/raise
-
-            if random.random() < 0.5:
-                return RaiseAction(min_raise)
-        if CheckAction in legal_actions:  # check-call
-            return CheckAction()
-
-        if random.random() < 0.25:
-            return FoldAction()
-
-        return CallAction()
-        """
 
 if __name__ == '__main__':
     run_bot(Player(), parse_args())

@@ -115,6 +115,37 @@
   - Applied only when `continue_cost / pot_total >= _TURN_RAISE_RATIO`.
   - Samples capped at 200, time capped at 0.05s to avoid timeouts.
 
+## Top Opponent Analysis (Games 18454 / 18459)
+### Observations
+- We win preflop + flop EV but consistently lose on **turn**.
+  - 18454: A preflop +1450, flop +1725, **turn −1672**.
+  - 18459: A preflop +1364, flop +1646, **turn −1542**.
+- Opponent folds a lot preflop and on Discard 2:
+  - Preflop folds ~289–310 hands; Discard 2 folds ~474–479 hands.
+- Opponent bets turn ~71–95 times, and we call almost all of them:
+  - 18454: B turn bets 71, A calls 64 (0 folds).
+  - 18459: B turn bets 95, A calls 83 (2 folds).
+- Opponent rarely raises after our turn bet; the damage is mostly from **calling their turn bets too often**.
+
+### Likely How They Win
+- They play tight early and fold often to our Discard 2 bets, but when they continue, their range is strong.
+- They then value-bet turn and we overcall with marginal equity; small errors get magnified by large turn pot sizes.
+
+### Plan to Beat Them
+1. **Turn bet-call tightening (non-raise path).**
+   - Add a turn-specific penalty when facing a **bet** (not raise), using `continue_cost / pot_total`.
+   - Require equity > pot_odds + extra margin for large turn bets.
+2. **Continuation filter after Discard 2.**
+   - Track when opponent **calls** our Discard 2 bet; treat their range as stronger on the next turn.
+   - Increase call threshold or reduce thin value bets on turn after such continuation.
+3. **Turn pot-control vs tight opponents.**
+   - If opponent has high preflop/discard2 fold rates, reduce turn barrels unless equity is clearly strong.
+4. **Equity precision for turn bet responses.**
+   - Upshift MC budget when facing a turn bet (not just raises), capped to avoid timeouts.
+5. **Diagnostic logging.**
+   - Log turn decision context: equity, pot odds, bet size ratio, opponent continuation state.
+   - Focus on spots where we call turn bets and lose at showdown.
+
 ## Phase 0: Self-play regression harness (Priority 0)
 - Build an engine-driven match runner that spawns two bots as separate processes (DONE).
 - Add deterministic seed control for reproducible runs; log the seed per match (DONE).

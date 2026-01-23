@@ -24,8 +24,11 @@ _RANGE_MODEL_DECAY = 0.99
 _OPPONENT_RANGE_MODEL = {
     "by_street": {},
     "showdowns": {"wins": 0.0, "losses": 0.0},
+    "inferred": {"sum": 0.0, "total": 0.0},
 }
+
 _USE_RANDOM_POLICY = os.environ.get("NEUROPOKER_USE_RANDOM_POLICY", "0") == "1"
+_RANDOM_POLICY_SEED = int(os.environ.get("NEUROPOKER_RANDOM_POLICY_SEED", "7") or "7")
 _DISABLE_PREFLOP_MIX = os.environ.get("NEUROPOKER_DISABLE_PREFLOP_MIX", "0") == "1"
 _VARIANT_PAIRWISE = os.environ.get("NEUROPOKER_VARIANT_PAIRWISE", "0") == "1"
 _VARIANT_GRAPH = os.environ.get("NEUROPOKER_VARIANT_GRAPH", "0") == "1"
@@ -33,6 +36,13 @@ _VARIANT_THRESHOLDS = os.environ.get("NEUROPOKER_VARIANT_THRESHOLDS", "0") == "1
 _RANDOM_POLICY_LR = 0.02
 _RANDOM_POLICY_HIDDEN = 16
 _LAST_HIDDEN = None
+_POLICY_IDS = ("bluff", "tight")
+_POLICY_EPSILON = float(os.environ.get("NEUROPOKER_POLICY_EPSILON", "0.15") or "0.15")
+_POLICY_LR = float(os.environ.get("NEUROPOKER_POLICY_LR", "0.15") or "0.15")
+_POLICY_STATS = {
+    "bluff": {"avg": 0.0, "count": 0.0},
+    "tight": {"avg": 0.0, "count": 0.0},
+}
 
 
 def active_variant_id() -> str:
@@ -167,6 +177,42 @@ def _load_param_file() -> Mapping[str, Tuple[float, ...]]:
         "turn_raise_time_mult",
         ("turn_raise_time_mult",),
     )
+    _maybe_group(
+        "discard_bluff_rate",
+        ("discard_bluff_rate",),
+    )
+    _maybe_group(
+        "discard_bluff_raise_rate",
+        ("discard_bluff_raise_rate",),
+    )
+    _maybe_group(
+        "discard_bluff_raise_fraction",
+        ("discard_bluff_raise_fraction",),
+    )
+    _maybe_group(
+        "nut_raise_equity",
+        ("nut_raise_equity",),
+    )
+    _maybe_group(
+        "aggro_equity",
+        ("aggro_equity",),
+    )
+    _maybe_group(
+        "aggro_raise_bonus",
+        ("aggro_raise_bonus",),
+    )
+    _maybe_group(
+        "hard_fold_equity_by_street",
+        ("hard_fold_post", "hard_fold_turn", "hard_fold_river"),
+    )
+    _maybe_group(
+        "hard_fold_pot_odds_min",
+        ("hard_fold_pot_odds_min",),
+    )
+    _maybe_group(
+        "fold_bias_by_street",
+        ("fold_bias_pre", "fold_bias_post", "fold_bias_turn", "fold_bias_river"),
+    )
     return grouped
 
 
@@ -254,6 +300,69 @@ _TURN_RAISE_TIME_MULT = _load_float_list(
     param_key="turn_raise_time_mult",
     param_values=_PARAM_VALUES,
 )[0]
+_DISCARD_BLUFF_RATE = _load_float_list(
+    "NEUROPOKER_DISCARD_BLUFF_RATE",
+    1,
+    (0.08,),
+    param_key="discard_bluff_rate",
+    param_values=_PARAM_VALUES,
+)[0]
+_DISCARD_BLUFF_RAISE_RATE = _load_float_list(
+    "NEUROPOKER_DISCARD_BLUFF_RAISE_RATE",
+    1,
+    (0.7,),
+    param_key="discard_bluff_raise_rate",
+    param_values=_PARAM_VALUES,
+)[0]
+_DISCARD_BLUFF_RAISE_FRACTION = _load_float_list(
+    "NEUROPOKER_DISCARD_BLUFF_RAISE_FRACTION",
+    1,
+    (1.0,),
+    param_key="discard_bluff_raise_fraction",
+    param_values=_PARAM_VALUES,
+)[0]
+_NUT_RAISE_EQUITY = _load_float_list(
+    "NEUROPOKER_NUT_RAISE_EQUITY",
+    1,
+    (0.86,),
+    param_key="nut_raise_equity",
+    param_values=_PARAM_VALUES,
+)[0]
+_AGGRO_EQUITY = _load_float_list(
+    "NEUROPOKER_AGGRO_EQUITY",
+    1,
+    (0.7,),
+    param_key="aggro_equity",
+    param_values=_PARAM_VALUES,
+)[0]
+_AGGRO_RAISE_BONUS = _load_float_list(
+    "NEUROPOKER_AGGRO_RAISE_BONUS",
+    1,
+    (0.05,),
+    param_key="aggro_raise_bonus",
+    param_values=_PARAM_VALUES,
+)[0]
+_HARD_FOLD_EQUITY_BY_STREET = _load_float_list(
+    "NEUROPOKER_HARD_FOLD_EQUITY_BY_STREET",
+    3,
+    (0.26, 0.30, 0.33),
+    param_key="hard_fold_equity_by_street",
+    param_values=_PARAM_VALUES,
+)
+_HARD_FOLD_POT_ODDS_MIN = _load_float_list(
+    "NEUROPOKER_HARD_FOLD_POT_ODDS_MIN",
+    1,
+    (0.06,),
+    param_key="hard_fold_pot_odds_min",
+    param_values=_PARAM_VALUES,
+)[0]
+_FOLD_BIAS_BY_STREET = _load_float_list(
+    "NEUROPOKER_FOLD_BIAS_BY_STREET",
+    4,
+    (0.0, 0.02, 0.03, 0.04),
+    param_key="fold_bias_by_street",
+    param_values=_PARAM_VALUES,
+)
 
 
 @dataclass(frozen=True)
@@ -333,7 +442,7 @@ class RandomFeaturePolicy:
             self.weights[idx] += lr * reward * feat
 
 
-_RANDOM_POLICY = RandomFeaturePolicy(seed=7)
+_RANDOM_POLICY = RandomFeaturePolicy(seed=_RANDOM_POLICY_SEED)
 
 
 def init_state(config: StrategyConfig) -> StrategyState:
@@ -356,12 +465,13 @@ def volatility_adjustment(base_ev: float, variance_proxy: float, config: Strateg
 
 def select_discard(
     equities: Sequence[float],
+    hero_hand: Sequence[str],
     config: StrategyConfig,
     state: StrategyState,
 ) -> int:
     """Pick the discard index, preferring higher equity with mild randomness."""
     if not equities:
-        return 0
+        return _fast_discard_index(hero_hand)
     best = max(range(len(equities)), key=equities.__getitem__)
     if state.rng.random() < config.discard_randomness:
         return state.rng.randrange(len(equities))
@@ -395,49 +505,34 @@ def decide_action(
     return next(iter(legal))
 
 
-def update_opponent_model(model: OpponentModel, action: str) -> None:
-    """Track opponent action frequencies for later range adjustments."""
+def update_opponent_model(
+    model: OpponentModel,
+    action: str,
+    street: Optional[int] = None,
+    inferred_strength: Optional[float] = None,
+) -> None:
+    """Track opponent action frequencies and lightweight range cues."""
     if action == "fold":
         model.fold_count += 1
+        if street is not None:
+            record_opponent_fold(street)
     elif action == "call":
         model.call_count += 1
+        if street is not None:
+            record_opponent_call(street)
     elif action == "raise":
         model.raise_count += 1
+        if street is not None:
+            record_opponent_raise(street)
+    if street is not None:
+        record_opponent_action(street)
+    if inferred_strength is not None:
+        record_inferred_range(inferred_strength)
 
 
 def extract_features(values: Mapping[str, float]) -> Dict[str, float]:
     """Normalize and sanitize feature inputs for simple learners."""
     return {key: float(val) for key, val in values.items()}
-
-
-def copula_activation(features: Mapping[str, float]) -> float:
-    """Placeholder for copula-style activation using simple aggregation."""
-    if not features:
-        return 0.0
-    return sum(features.values()) / len(features)
-
-
-def graph_isomorphic_activation(features: Mapping[str, float]) -> float:
-    """Placeholder for topology-aware activation; use max feature for now."""
-    if not features:
-        return 0.0
-    return max(features.values())
-
-
-def continuous_random_draw(features: Mapping[str, float], state: StrategyState) -> float:
-    """Sample an activation by mixing features with bounded noise."""
-    base = copula_activation(features)
-    return base + state.rng.uniform(-0.1, 0.1)
-
-
-def weighted_signature(features: Mapping[str, float]) -> float:
-    """Combine weighted feature signatures into a single activation."""
-    if not features:
-        return 0.0
-    total = 0.0
-    for i, value in enumerate(features.values(), start=1):
-        total += value / i
-    return total / len(features)
 
 
 def hebbian_update(
@@ -464,6 +559,44 @@ def mimetic_update(
     return updated
 
 
+def begin_round(player: PlayerView) -> str:
+    """Select and persist the round-long policy choice."""
+    policy_id = _select_round_policy(player)
+    return policy_id
+
+
+def update_policy_from_round(player: PlayerView) -> None:
+    """Update policy scores based on the round outcome."""
+    policy_id = getattr(player.hero, "policy_id", None)
+    if policy_id not in _POLICY_STATS:
+        return
+    delta = getattr(player.hero, "delta", 0)
+    reward = max(-1.0, min(1.0, delta / 100.0))
+    stats_bucket = _POLICY_STATS[policy_id]
+    stats_bucket["avg"] += _POLICY_LR * (reward - stats_bucket["avg"])
+    stats_bucket["count"] += 1.0
+
+
+def _select_round_policy(player: PlayerView) -> str:
+    policy_id = getattr(player.hero, "policy_id", None)
+    policy_round = getattr(player.hero, "policy_round", None)
+    round_num = getattr(player, "round_num", 0)
+    if policy_id in _POLICY_IDS and policy_round == round_num:
+        return policy_id
+    if random.random() < _POLICY_EPSILON:
+        choice = random.choice(_POLICY_IDS)
+    else:
+        best = max(_POLICY_IDS, key=lambda name: _POLICY_STATS[name]["avg"])
+        if _POLICY_STATS[best]["count"] == 0 and _POLICY_STATS[_POLICY_IDS[0]]["count"] == 0:
+            choice = random.choice(_POLICY_IDS)
+        else:
+            choice = best
+    player.hero.policy_id = choice
+    player.hero.policy_round = round_num
+    player.hero.discard_bluff = choice == "bluff"
+    return choice
+
+
 def play(bot):
     """
     Strategy entry point called by player.py.
@@ -471,157 +604,12 @@ def play(bot):
     This function should read the live fields on player and return an action
     instance from skeleton.actions.
     """
-    return _fallback_action(bot)
-
-
-def _fallback_action(player: PlayerView):
-    """Baseline equity-driven action selection using Monte Carlo estimates."""
-    from skeleton.actions import CallAction, CheckAction, DiscardAction, FoldAction, RaiseAction
-
-    legal_actions = set(player.hero.legal_actions)
-    hero_hand = list(player.hero.hand)
-    board_cards = list(player.community)
-
-    if DiscardAction in legal_actions:
-        opponent_discard = None
-        if not player.hero.blind and len(board_cards) >= 3:
-            opponent_discard = board_cards[-1]
-        discard_samples, discard_seconds = _discard_budget(player)
-        equities = stats.discard_equity(
-            hero_hand,
-            board_cards,
-            n_samples=discard_samples,
-            max_seconds=discard_seconds,
-        )
-        best_i = _select_discard_asymmetric(
-            hero_hand,
-            equities,
-            discard_visible=player.hero.blind,
-            opponent_discard=opponent_discard,
-            board_cards=board_cards,
-        )
-        player.hero.last_discard = hero_hand[best_i]
-        player.hero.last_discard_visible = player.hero.blind
-        return DiscardAction(best_i)
-
-    if len(legal_actions) == 1:
-        action = next(iter(legal_actions))
-        return action()
-
-    pot_total = max(1, player.hero.pot_total)
-    if player.street <= 0:
-        equity = stats.preflop_strength(hero_hand)
-    else:
-        samples, max_seconds, discard_samples = _equity_budget(player)
-        samples, max_seconds, discard_samples = _adjust_budget_for_turn_raise(
-            player,
-            pot_total,
-            samples,
-            max_seconds,
-            discard_samples,
-        )
-        quick_equity = stats.estimate_equity(
-            hero_hand,
-            board_cards,
-            samples=max(20, samples // 4),
-            max_seconds=min(0.006, max_seconds * 0.2),
-            discard_samples=max(4, discard_samples // 2),
-        )
-        equity = quick_equity
-    pot_odds = pot_odds_to_call(player.hero.continue_cost, pot_total)
-    raise_margin = _raise_margin_by_street(player.street)
-    call_margin = _call_margin_by_street(player.street)
-    discard_bias = _opponent_discard_bias(player.street)
-    range_bias = _opponent_range_bias(player.street)
-    texture_raise, texture_call, raise_cap_mult = _board_texture_adjustments(board_cards)
-    variant_id = active_variant_id()
-    equity_bias, raise_variant, call_variant = _variant_adjustments(
-        variant_id,
-        player,
-        hero_hand,
-        board_cards,
-    )
-    if player.street <= 0 and equity_bias:
-        equity = max(0.0, min(1.0, equity + equity_bias))
-    raise_margin += discard_bias
-    call_margin += discard_bias
-    raise_margin += range_bias
-    call_margin += range_bias
-    raise_margin += raise_variant
-    call_margin += call_variant
-
-    if _USE_RANDOM_POLICY:
-        policy_bias = _policy_bias(player, equity, pot_odds)
-        raise_margin -= policy_bias
-        call_margin -= policy_bias
-    raise_margin += texture_raise
-    call_margin += texture_call
-    raise_call_penalty = _raise_call_penalty(player, pot_total)
-    call_margin -= raise_call_penalty
-    turn_raise_extra = _turn_raise_extra(player, pot_total)
-    if turn_raise_extra > 0:
-        call_margin -= turn_raise_extra
-
-    if player.street <= 0 and not _DISABLE_PREFLOP_MIX:
-        min_raise, max_raise = getattr(player.hero, "raise_bounds", (0, 0))
-        action = _preflop_open_decision(
-            player,
-            equity,
-            pot_odds,
-            legal_actions,
-            min_raise,
-            max_raise,
-            pot_total,
-        )
-        if action is not None:
-            return action
-
-    if player.street > 0:
-        raise_threshold = pot_odds + raise_margin
-        if quick_equity > raise_threshold + 0.12:
-            equity = quick_equity
-        elif quick_equity < pot_odds - call_margin - 0.12:
-            equity = quick_equity
-        else:
-            equity = stats.estimate_equity(
-                hero_hand,
-                board_cards,
-                samples=samples,
-                max_seconds=max_seconds,
-                discard_samples=discard_samples,
-            )
-        if equity_bias:
-            equity = max(0.0, min(1.0, equity + equity_bias))
-
-    if RaiseAction in legal_actions:
-        min_raise, max_raise = getattr(player.hero, "raise_bounds", (0, 0))
-        raise_threshold = pot_odds + raise_margin
-        raise_cap = max(4, int(pot_total // 2 * raise_cap_mult))
-        fold_rate = fold_equity_estimate(None, min_raise, player.street, pot_total)
-        if min_raise > raise_cap or min_raise > player.hero.stack // 2:
-            pass
-        elif equity > raise_threshold and min_raise > 0:
-            target = _raise_size(pot_total, min_raise, max_raise, equity)
-            target = _adjust_value_raise(target, min_raise, max_raise, fold_rate, equity)
-            return RaiseAction(target)
-        if equity < pot_odds - 0.1 and _should_bluff(player.street, board_cards):
-            if fold_rate <= 0.3:
-                pass
-            else:
-                target = _raise_size(pot_total, min_raise, max_raise, equity, bluff=True)
-                if target > 0:
-                    return RaiseAction(target)
-
-    if equity < pot_odds - call_margin and FoldAction in legal_actions:
-        return FoldAction()
-
-    if CheckAction in legal_actions and player.hero.continue_cost == 0:
-        return CheckAction()
-    if CallAction in legal_actions:
-        return CallAction()
-    if CheckAction in legal_actions:
-        return CheckAction()
-    return FoldAction()
+    policy_id = _select_round_policy(bot)
+    if policy_id == "bluff":
+        import strategies.bluff as bluff_policy
+        return bluff_policy.play(bot)
+    import strategies.tight as tight_policy
+    return tight_policy.play(bot)
 
 
 def _raise_margin_by_street(street: int) -> float:
@@ -642,6 +630,71 @@ def _call_margin_by_street(street: int) -> float:
     if street <= 4:
         return _CALL_MARGIN_BY_STREET[2]
     return _CALL_MARGIN_BY_STREET[3]
+
+
+def _fold_bias_by_street(street: int) -> float:
+    if street <= 0:
+        return _FOLD_BIAS_BY_STREET[0]
+    if street <= 3:
+        return _FOLD_BIAS_BY_STREET[1]
+    if street <= 4:
+        return _FOLD_BIAS_BY_STREET[2]
+    return _FOLD_BIAS_BY_STREET[3]
+
+
+def _hard_fold_equity(street: int) -> float:
+    if street <= 3:
+        return 0.0
+    if street <= 4:
+        return _HARD_FOLD_EQUITY_BY_STREET[0]
+    if street <= 5:
+        return _HARD_FOLD_EQUITY_BY_STREET[1]
+    return _HARD_FOLD_EQUITY_BY_STREET[2]
+
+
+def _should_discard_bluff(player: PlayerView) -> bool:
+    if _DISCARD_BLUFF_RATE <= 0.0:
+        return False
+    return random.random() < _DISCARD_BLUFF_RATE
+
+
+def _discard_bluff_index(hero_hand: Sequence[str]) -> int:
+    cards_int = stats._ensure_int_cards(list(hero_hand))
+    ranks = [stats.Card.get_rank_int(card) for card in cards_int]
+    return max(range(len(ranks)), key=ranks.__getitem__)
+
+
+def _discard_bluff_active(player: PlayerView) -> bool:
+    return bool(getattr(player.hero, "discard_bluff", False))
+
+
+def _consume_discard_bluff(player: PlayerView) -> None:
+    if hasattr(player.hero, "discard_bluff"):
+        player.hero.discard_bluff = False
+
+
+def _should_discard_bluff_raise(player: PlayerView) -> bool:
+    if not _discard_bluff_active(player):
+        return False
+    if player.street <= 3:
+        return False
+    if _DISCARD_BLUFF_RAISE_RATE <= 0.0:
+        return False
+    return random.random() < _DISCARD_BLUFF_RAISE_RATE
+
+
+def _discard_bluff_raise_target(min_raise: int, max_raise: int) -> int:
+    if max_raise <= 0:
+        return min_raise
+    target = int(max_raise * _DISCARD_BLUFF_RAISE_FRACTION)
+    target = max(min_raise, target)
+    return min(target, max_raise)
+
+
+def _nut_raise_target(min_raise: int, max_raise: int) -> int:
+    if max_raise <= 0:
+        return min_raise
+    return max(min_raise, max_raise)
 
 
 def _raise_call_penalty(player: PlayerView, pot_total: int) -> float:
@@ -965,20 +1018,44 @@ def fold_equity_estimate(player_id, bet_size: int, street: int, pot_total: int) 
 
 
 def record_opponent_raise(street: int) -> None:
-    bucket = _OPPONENT_RANGE_MODEL["by_street"].setdefault(street, {"raises": 0.0, "calls": 0.0, "total": 0.0})
+    bucket = _OPPONENT_RANGE_MODEL["by_street"].setdefault(
+        street,
+        {"raises": 0.0, "calls": 0.0, "folds": 0.0, "total": 0.0},
+    )
     bucket["raises"] += 1.0
     bucket["total"] += 1.0
 
 
 def record_opponent_action(street: int) -> None:
-    bucket = _OPPONENT_RANGE_MODEL["by_street"].setdefault(street, {"raises": 0.0, "calls": 0.0, "total": 0.0})
+    bucket = _OPPONENT_RANGE_MODEL["by_street"].setdefault(
+        street,
+        {"raises": 0.0, "calls": 0.0, "folds": 0.0, "total": 0.0},
+    )
     bucket["total"] += 1.0
 
 
 def record_opponent_call(street: int) -> None:
-    bucket = _OPPONENT_RANGE_MODEL["by_street"].setdefault(street, {"raises": 0.0, "calls": 0.0, "total": 0.0})
+    bucket = _OPPONENT_RANGE_MODEL["by_street"].setdefault(
+        street,
+        {"raises": 0.0, "calls": 0.0, "folds": 0.0, "total": 0.0},
+    )
     bucket["calls"] += 1.0
     bucket["total"] += 1.0
+
+
+def record_opponent_fold(street: int) -> None:
+    bucket = _OPPONENT_RANGE_MODEL["by_street"].setdefault(
+        street,
+        {"raises": 0.0, "calls": 0.0, "folds": 0.0, "total": 0.0},
+    )
+    bucket["folds"] += 1.0
+    bucket["total"] += 1.0
+
+
+def record_inferred_range(strength: float) -> None:
+    inferred = _OPPONENT_RANGE_MODEL["inferred"]
+    inferred["sum"] += float(strength)
+    inferred["total"] += 1.0
 
 
 def record_opponent_showdown(win: bool) -> None:
@@ -990,9 +1067,12 @@ def decay_range_model() -> None:
     for bucket in _OPPONENT_RANGE_MODEL["by_street"].values():
         bucket["raises"] *= _RANGE_MODEL_DECAY
         bucket["calls"] *= _RANGE_MODEL_DECAY
+        bucket["folds"] *= _RANGE_MODEL_DECAY
         bucket["total"] *= _RANGE_MODEL_DECAY
     _OPPONENT_RANGE_MODEL["showdowns"]["wins"] *= _RANGE_MODEL_DECAY
     _OPPONENT_RANGE_MODEL["showdowns"]["losses"] *= _RANGE_MODEL_DECAY
+    _OPPONENT_RANGE_MODEL["inferred"]["sum"] *= _RANGE_MODEL_DECAY
+    _OPPONENT_RANGE_MODEL["inferred"]["total"] *= _RANGE_MODEL_DECAY
 
 
 def opponent_range_strength() -> float:
@@ -1008,7 +1088,11 @@ def update_range_after_discard(range3, discarded_card):
     return range3
 
 
-def _should_bluff(street: int, board_cards: Sequence[str]) -> bool:
+def _should_bluff(street: int, board_cards: Sequence[str], allow_bluff: bool = True) -> bool:
+    if not allow_bluff:
+        return False
+    if street == 0:
+        return random.random() < 0.06
     if street < 3:
         return False
     board_int = stats._ensure_int_cards(list(board_cards))
@@ -1017,6 +1101,34 @@ def _should_bluff(street: int, board_cards: Sequence[str]) -> bool:
     if _board_is_flushy(board_int):
         return False
     return random.random() < 0.06
+
+
+def _fast_discard_index(hero_hand: Sequence[str]) -> int:
+    if not hero_hand:
+        return 0
+    cards_int = stats._ensure_int_cards(list(hero_hand))
+    ranks = [stats.Card.get_rank_int(card) for card in cards_int]
+    suits = [stats.Card.get_suit_int(card) for card in cards_int]
+    scores = []
+    for idx, rank in enumerate(ranks):
+        score = rank
+        if ranks.count(rank) > 1:
+            score += 6
+        if suits.count(suits[idx]) > 1:
+            score += 2
+        for jdx, other in enumerate(ranks):
+            if idx == jdx:
+                continue
+            if abs(rank - other) <= 3:
+                score += 1
+                break
+        scores.append(score)
+    best_keep = max(range(len(scores)), key=scores.__getitem__)
+    discard = min(
+        (i for i in range(len(scores)) if i != best_keep),
+        key=lambda i: (scores[i], ranks[i]),
+    )
+    return discard
 
 
 def _board_is_paired(board_int: Sequence[int]) -> bool:
