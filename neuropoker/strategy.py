@@ -143,6 +143,14 @@ def _load_param_file() -> Mapping[str, Tuple[float, ...]]:
         "call_margin_by_street",
         ("call_margin_pre", "call_margin_post", "call_margin_turn", "call_margin_river"),
     )
+    _maybe_group(
+        "raise_call_ratio",
+        ("raise_call_ratio",),
+    )
+    _maybe_group(
+        "raise_call_penalty",
+        ("raise_call_penalty",),
+    )
     return grouped
 
 
@@ -188,6 +196,20 @@ _CALL_MARGIN_BY_STREET = _load_float_list(
     param_key="call_margin_by_street",
     param_values=_PARAM_VALUES,
 )
+_RAISE_CALL_RATIO = _load_float_list(
+    "NEUROPOKER_RAISE_CALL_RATIO",
+    1,
+    (0.6,),
+    param_key="raise_call_ratio",
+    param_values=_PARAM_VALUES,
+)[0]
+_RAISE_CALL_PENALTY = _load_float_list(
+    "NEUROPOKER_RAISE_CALL_PENALTY",
+    1,
+    (0.08,),
+    param_key="raise_call_penalty",
+    param_values=_PARAM_VALUES,
+)[0]
 
 
 @dataclass(frozen=True)
@@ -483,6 +505,8 @@ def _fallback_action(player: PlayerView):
         call_margin -= policy_bias
     raise_margin += texture_raise
     call_margin += texture_call
+    raise_call_penalty = _raise_call_penalty(player.hero.continue_cost, pot_total)
+    call_margin += raise_call_penalty
 
     if player.street <= 0 and not _DISABLE_PREFLOP_MIX:
         min_raise, max_raise = getattr(player.hero, "raise_bounds", (0, 0))
@@ -564,6 +588,15 @@ def _call_margin_by_street(street: int) -> float:
     if street <= 4:
         return _CALL_MARGIN_BY_STREET[2]
     return _CALL_MARGIN_BY_STREET[3]
+
+
+def _raise_call_penalty(continue_cost: int, pot_total: int) -> float:
+    if continue_cost <= 0:
+        return 0.0
+    ratio = continue_cost / float(max(1, pot_total))
+    if ratio >= _RAISE_CALL_RATIO:
+        return _RAISE_CALL_PENALTY
+    return 0.0
 
 
 def _preflop_open_decision(
