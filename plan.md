@@ -30,7 +30,7 @@
 - Compare current bot vs previous versions and fixed baselines (DONE).
 
 ## Phase 1: Baseline fixes (correctness + speed)
-- Ensure pkrbot install is present and working on the server (offline install or bundled wheel as needed). (PARTIAL)
+- Ensure pkrbot install is present and working on the server (offline install or bundled wheel as needed). (DONE)
 - Review discard-equity simulations to cover opponent discard and future board cards; update notes when modeling assumptions change. (DONE)
 - Audit all bots for scrimmage server hardware constraints (single CPU core, no GPU) and remove unsupported assumptions. (DONE)
 - Cap thread usage and disable GPU-optional code paths where applicable (e.g., set OMP/MKL/BLAS thread caps, skip GPU imports). (DONE)
@@ -39,7 +39,7 @@
 - `neuropoker/player.py`: ensure no multi-process spawns; set conservative runtime caps for single-core CPU. (DONE)
 - `neuropoker/strategy.py`: avoid heavy loops per decision; add early exits/low-sample fallbacks for single-core runtime. (DONE)
 - `neuropoker/stats.py`: enforce thread caps for BLAS/OpenMP backends; keep CPU-only eval path. (DONE)
-- `neuropoker/scripts/ensure_pkrbot.py`: verify wheel install path works offline and is CPU-only (if needed). (PARTIAL)
+- `neuropoker/scripts/ensure_pkrbot.py`: verify wheel install path works offline and is CPU-only (if needed). (DONE)
 - `engine-2026/config.py`: confirm bot configs do not assume multi-core or GPU resources. (DONE)
 
 ## Phase 2: Core decision model
@@ -73,7 +73,7 @@
 
 ## Priority Ranking (Highest to Lowest)
 P0. Build self-play regression harness (engine-driven process isolation, deterministic seeds, seat swaps/duplicates, metrics/logging). (DONE)
-P1. Ensure pkrbot is installed and working on the server (baseline correctness/speed). (PARTIAL)
+P1. Ensure pkrbot is installed and working on the server (baseline correctness/speed). (DONE)
 P2. Review discard-equity simulations to cover opponent discard and future board cards. (DONE)
 P2.5. Update all bots to comply with server hardware constraints (single CPU core, no GPU) and enforce thread caps. (DONE)
 P4. Strengthen preflop with a tuned 3-card LUT or bucketed heuristic. (DONE)
