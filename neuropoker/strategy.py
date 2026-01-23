@@ -403,7 +403,7 @@ def _preflop_open_decision(
     max_raise: int,
     pot_total: int,
 ):
-    from skeleton.actions import CallAction, RaiseAction
+    from skeleton.actions import CallAction, RaiseAction, CheckAction, FoldAction
     roll = _preflop_roll(player)
     if RaiseAction in legal_actions:
         if equity >= 0.7:
@@ -444,7 +444,16 @@ def _preflop_open_decision(
         if call_prob > 0 and roll < call_prob:
             _set_preflop_debug(player, bucket, roll)
             return CallAction()
-    _set_preflop_debug(player, "fold_default", roll)
+    if CheckAction in legal_actions and player.hero.continue_cost == 0:
+        _set_preflop_debug(player, "check_default", roll)
+        return CheckAction()
+    if CallAction in legal_actions:
+        _set_preflop_debug(player, "call_default", roll)
+        return CallAction()
+    if FoldAction in legal_actions:
+        _set_preflop_debug(player, "fold_default", roll)
+        return FoldAction()
+    _set_preflop_debug(player, "no_action", roll)
     return None
 
 
