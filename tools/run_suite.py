@@ -6,6 +6,7 @@ import argparse
 import datetime as _dt
 import json
 import os
+import random
 import subprocess
 import sys
 
@@ -63,6 +64,17 @@ def main():
     parser = argparse.ArgumentParser(description="Run a suite of matches and aggregate results.")
     parser.add_argument("--bot-a", required=True, help="Path to bot A")
     parser.add_argument("--bot-b", required=True, help="Path to bot B")
+    parser.add_argument(
+        "--bot-b-pool",
+        default=None,
+        help="Comma-separated list of bot-b paths; used per match.",
+    )
+    parser.add_argument(
+        "--bot-b-pool-mode",
+        default="cycle",
+        choices=["cycle", "random"],
+        help="Selection mode for bot-b pool per match.",
+    )
     parser.add_argument("--engine-dir", default="engine-2026", help="Engine directory")
     parser.add_argument("--rounds", type=int, default=1000, help="Rounds per match")
     parser.add_argument("--matches", type=int, default=2, help="Number of seeds to run")
@@ -77,6 +89,20 @@ def main():
     args.engine_dir = os.path.abspath(args.engine_dir)
     args.bot_a = os.path.abspath(args.bot_a)
     args.bot_b = os.path.abspath(args.bot_b)
+    bot_b_pool = None
+    if args.bot_b_pool:
+        pool = [args.bot_b]
+        for entry in args.bot_b_pool.split(","):
+            entry = entry.strip()
+            if entry:
+                pool.append(os.path.abspath(entry))
+        bot_b_pool = []
+        seen = set()
+        for entry in pool:
+            if entry not in seen:
+                bot_b_pool.append(entry)
+                seen.add(entry)
+    args.bot_b_pool = bot_b_pool
     base_dir = os.path.abspath(args.output_dir)
     if not os.path.exists(base_dir):
         os.makedirs(base_dir)
@@ -92,6 +118,15 @@ def main():
         seed = args.seed_start + i
         match_dir = os.path.join(suite_dir, "match_%03d" % (i + 1))
         os.makedirs(match_dir)
+        bot_b_path = args.bot_b
+        if args.bot_b_pool:
+            if args.bot_b_pool_mode == "random":
+                rng = random.Random(args.seed_start + i)
+                bot_b_path = rng.choice(args.bot_b_pool)
+            else:
+                bot_b_path = args.bot_b_pool[i % len(args.bot_b_pool)]
+        with open(os.path.join(match_dir, "bot_b.txt"), "w") as handle:
+            handle.write(bot_b_path + "\n")
 
         cmd = [
             sys.executable,
@@ -100,7 +135,7 @@ def main():
             "--engine-python", args.engine_python or "",
             "--bot-python", args.bot_python or "",
             "--bot-a", args.bot_a,
-            "--bot-b", args.bot_b,
+            "--bot-b", bot_b_path,
             "--rounds", str(args.rounds),
             "--seed", str(seed),
             "--output-dir", match_dir,
@@ -155,7 +190,7 @@ def main():
                 "--engine-dir", args.engine_dir,
                 "--engine-python", args.engine_python or "",
                 "--bot-python", args.bot_python or "",
-                "--bot-a", args.bot_b,
+                "--bot-a", bot_b_path,
                 "--bot-b", args.bot_a,
                 "--rounds", str(args.rounds),
                 "--seed", str(seed),
