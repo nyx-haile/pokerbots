@@ -313,11 +313,18 @@ def _fallback_action(player: PlayerView):
     raise_margin += texture_raise
     call_margin += texture_call
 
-    preflop_raise_threshold = None
-    preflop_call_threshold = None
     if player.street <= 0:
-        preflop_raise_threshold = max(pot_odds + 0.05, 0.55)
-        preflop_call_threshold = max(pot_odds - 0.02, 0.45)
+        min_raise, max_raise = getattr(player.hero, "raise_bounds", (0, 0))
+        action = _preflop_open_decision(
+            equity,
+            pot_odds,
+            legal_actions,
+            min_raise,
+            max_raise,
+            pot_total,
+        )
+        if action is not None:
+            return action
 
     if player.street > 0:
         raise_threshold = pot_odds + raise_margin
@@ -337,8 +344,6 @@ def _fallback_action(player: PlayerView):
     if RaiseAction in legal_actions:
         min_raise, max_raise = getattr(player.hero, "raise_bounds", (0, 0))
         raise_threshold = pot_odds + raise_margin
-        if preflop_raise_threshold is not None:
-            raise_threshold = max(raise_threshold, preflop_raise_threshold)
         raise_cap = max(4, int(pot_total // 2 * raise_cap_mult))
         fold_rate = fold_equity_estimate(None, min_raise, player.street, pot_total)
         if min_raise > raise_cap or min_raise > player.hero.stack // 2:
@@ -355,9 +360,6 @@ def _fallback_action(player: PlayerView):
                 if target > 0:
                     return RaiseAction(target)
 
-    if preflop_call_threshold is not None and CallAction in legal_actions:
-        if equity >= preflop_call_threshold:
-            return CallAction()
     if equity < pot_odds - call_margin and FoldAction in legal_actions:
         return FoldAction()
 
@@ -388,6 +390,46 @@ def _call_margin_by_street(street: int) -> float:
     if street <= 4:
         return 0.05
     return 0.06
+
+
+def _preflop_open_decision(
+    equity: float,
+    pot_odds: float,
+    legal_actions: Sequence[object],
+    min_raise: int,
+    max_raise: int,
+    pot_total: int,
+):
+    if RaiseAction in legal_actions:
+        if equity >= 0.7:
+            raise_prob = 0.7
+        elif equity >= 0.62:
+            raise_prob = 0.45
+        elif equity >= 0.56:
+            raise_prob = 0.25
+        else:
+            raise_prob = 0.0
+        if equity < pot_odds:
+            raise_prob *= 0.5
+        if raise_prob > 0 and random.random() < raise_prob:
+            target = _raise_size(pot_total, min_raise, max_raise, equity)
+            if target > 0:
+                return RaiseAction(target)
+
+    if CallAction in legal_actions:
+        if equity >= 0.52:
+            call_prob = 0.75
+        elif equity >= 0.47:
+            call_prob = 0.5
+        elif equity >= 0.42:
+            call_prob = 0.25
+        else:
+            call_prob = 0.0
+        if equity < pot_odds - 0.05:
+            call_prob *= 0.5
+        if call_prob > 0 and random.random() < call_prob:
+            return CallAction()
+    return None
 
 
 def _board_texture_adjustments(board_cards: Sequence[str]) -> Tuple[float, float, float]:
