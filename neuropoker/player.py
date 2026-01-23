@@ -248,8 +248,7 @@ class Player(Bot):
         try:
             action = strategy.play(self)
         except Exception:
-            else:
-                action = FoldAction()
+            action = FoldAction()
 
         if isinstance(action, DiscardAction):
             try:

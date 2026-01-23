@@ -36,13 +36,9 @@ _VARIANT_THRESHOLDS = os.environ.get("NEUROPOKER_VARIANT_THRESHOLDS", "0") == "1
 _RANDOM_POLICY_LR = 0.02
 _RANDOM_POLICY_HIDDEN = 16
 _LAST_HIDDEN = None
-_POLICY_IDS = ("bluff", "tight")
 _POLICY_EPSILON = float(os.environ.get("NEUROPOKER_POLICY_EPSILON", "0.15") or "0.15")
 _POLICY_LR = float(os.environ.get("NEUROPOKER_POLICY_LR", "0.15") or "0.15")
-_POLICY_STATS = {
-    "bluff": {"avg": 0.0, "count": 0.0},
-    "tight": {"avg": 0.0, "count": 0.0},
-}
+_POLICY_STATS = {}
 
 
 def active_variant_id() -> str:
@@ -213,6 +209,14 @@ def _load_param_file() -> Mapping[str, Tuple[float, ...]]:
         "fold_bias_by_street",
         ("fold_bias_pre", "fold_bias_post", "fold_bias_turn", "fold_bias_river"),
     )
+    _maybe_group(
+        "tight_equity_threshold",
+        ("tight_equity_threshold",),
+    )
+    _maybe_group(
+        "bluff_weakness_threshold",
+        ("bluff_weakness_threshold",),
+    )
     return grouped
 
 
@@ -363,6 +367,20 @@ _FOLD_BIAS_BY_STREET = _load_float_list(
     param_key="fold_bias_by_street",
     param_values=_PARAM_VALUES,
 )
+_TIGHT_EQUITY_THRESHOLD = _load_float_list(
+    "NEUROPOKER_TIGHT_EQUITY_THRESHOLD",
+    1,
+    (0.6,),
+    param_key="tight_equity_threshold",
+    param_values=_PARAM_VALUES,
+)[0]
+_BLUFF_WEAKNESS_THRESHOLD = _load_float_list(
+    "NEUROPOKER_BLUFF_WEAKNESS_THRESHOLD",
+    1,
+    (0.08,),
+    param_key="bluff_weakness_threshold",
+    param_values=_PARAM_VALUES,
+)[0]
 
 
 @dataclass(frozen=True)
@@ -560,41 +578,105 @@ def mimetic_update(
 
 
 def begin_round(player: PlayerView) -> str:
-    """Select and persist the round-long policy choice."""
-    policy_id = _select_round_policy(player)
-    return policy_id
+    """Reset round policy selection; play() will choose when needed."""
+    player.hero.policy_class = None
+    player.hero.policy_round = None
+    player.hero.discard_bluff = False
+    return "unset"
 
 
 def update_policy_from_round(player: PlayerView) -> None:
     """Update policy scores based on the round outcome."""
-    policy_id = getattr(player.hero, "policy_id", None)
-    if policy_id not in _POLICY_STATS:
+    policy_class = getattr(player.hero, "policy_class", None)
+    if not policy_class:
+        return
+    _ensure_policy_stats()
+    policy_key = _policy_key(policy_class)
+    if policy_key not in _POLICY_STATS:
         return
     delta = getattr(player.hero, "delta", 0)
     reward = max(-1.0, min(1.0, delta / 100.0))
-    stats_bucket = _POLICY_STATS[policy_id]
+    stats_bucket = _POLICY_STATS[policy_key]
     stats_bucket["avg"] += _POLICY_LR * (reward - stats_bucket["avg"])
     stats_bucket["count"] += 1.0
 
 
-def _select_round_policy(player: PlayerView) -> str:
-    policy_id = getattr(player.hero, "policy_id", None)
+def _policy_key(policy_class) -> str:
+    return getattr(policy_class, "__name__", str(policy_class))
+
+
+def _policy_classes():
+    import strategies.bluff as bluff_policy
+    import strategies.tight as tight_policy
+
+    return (bluff_policy.BluffPolicy, tight_policy.TightPolicy)
+
+
+def _ensure_policy_stats() -> None:
+    for policy_class in _policy_classes():
+        key = _policy_key(policy_class)
+        _POLICY_STATS.setdefault(key, {"avg": 0.0, "count": 0.0})
+
+
+def _select_round_policy(player: PlayerView):
+    policy_class = getattr(player.hero, "policy_class", None)
     policy_round = getattr(player.hero, "policy_round", None)
     round_num = getattr(player, "round_num", 0)
-    if policy_id in _POLICY_IDS and policy_round == round_num:
-        return policy_id
-    if random.random() < _POLICY_EPSILON:
-        choice = random.choice(_POLICY_IDS)
-    else:
-        best = max(_POLICY_IDS, key=lambda name: _POLICY_STATS[name]["avg"])
-        if _POLICY_STATS[best]["count"] == 0 and _POLICY_STATS[_POLICY_IDS[0]]["count"] == 0:
-            choice = random.choice(_POLICY_IDS)
-        else:
-            choice = best
-    player.hero.policy_id = choice
-    player.hero.policy_round = round_num
-    player.hero.discard_bluff = choice == "bluff"
-    return choice
+    if policy_class in _policy_classes() and policy_round == round_num:
+        return policy_class
+    return None
+
+
+def _estimate_policy_equity(player: PlayerView) -> float:
+    hero_hand = list(player.hero.hand)
+    board_cards = list(player.community)
+    if player.street <= 0:
+        return stats.preflop_strength(hero_hand)
+    samples, max_seconds, discard_samples = _equity_budget(player)
+    return stats.estimate_equity(
+        hero_hand,
+        board_cards,
+        samples=max(16, samples // 6),
+        max_seconds=min(0.004, max_seconds * 0.2),
+        discard_samples=max(4, discard_samples // 2),
+    )
+
+
+def _opponent_weakness_score(player: PlayerView) -> float:
+    fold_rate = _opponent_fold_rate(player.street, None)
+    range_bucket = _OPPONENT_RANGE_MODEL["by_street"].get(player.street, {})
+    total = range_bucket.get("total", 0.0)
+    raises = range_bucket.get("raises", 0.0)
+    raise_rate = raises / total if total >= 5 else None
+    inferred = _OPPONENT_RANGE_MODEL["inferred"]
+    inferred_avg = inferred["sum"] / inferred["total"] if inferred["total"] >= 5 else None
+    score = 0.0
+    if fold_rate > 0.0:
+        score += max(0.0, fold_rate - 0.25)
+    if raise_rate is not None:
+        score += max(0.0, 0.3 - raise_rate)
+    if inferred_avg is not None:
+        score += max(0.0, 0.45 - inferred_avg)
+    return score
+
+
+def _bluff_threshold() -> float:
+    _ensure_policy_stats()
+    bluff_cls, tight_cls = _policy_classes()
+    bluff_avg = _POLICY_STATS[_policy_key(bluff_cls)]["avg"]
+    tight_avg = _POLICY_STATS[_policy_key(tight_cls)]["avg"]
+    bias = max(-0.05, min(0.05, (bluff_avg - tight_avg) * 0.2))
+    return max(0.0, _BLUFF_WEAKNESS_THRESHOLD - bias)
+
+
+def _choose_policy_for_round(player: PlayerView, equity: float):
+    bluff_cls, tight_cls = _policy_classes()
+    if equity >= _TIGHT_EQUITY_THRESHOLD:
+        return tight_cls
+    weakness = _opponent_weakness_score(player)
+    if weakness >= _bluff_threshold():
+        return bluff_cls
+    return None
 
 
 def play(bot):
@@ -604,12 +686,27 @@ def play(bot):
     This function should read the live fields on player and return an action
     instance from skeleton.actions.
     """
-    policy_id = _select_round_policy(bot)
-    if policy_id == "bluff":
-        import strategies.bluff as bluff_policy
-        return bluff_policy.play(bot)
-    import strategies.tight as tight_policy
-    return tight_policy.play(bot)
+    policy_class = _select_round_policy(bot)
+    if not policy_class:
+        equity = _estimate_policy_equity(bot)
+        policy_class = _choose_policy_for_round(bot, equity)
+        if policy_class:
+            bot.hero.policy_class = policy_class
+            bot.hero.policy_round = getattr(bot, "round_num", 0)
+            bot.hero.discard_bluff = policy_class.__name__ == "BluffPolicy"
+    if policy_class:
+        return policy_class.play(bot)
+    from skeleton.actions import CheckAction, CallAction, FoldAction
+    legal_actions = set(bot.hero.legal_actions)
+    if FoldAction in legal_actions and bot.hero.continue_cost > 0:
+        return FoldAction()
+    if CheckAction in legal_actions and bot.hero.continue_cost == 0:
+        return CheckAction()
+    if CallAction in legal_actions:
+        return CallAction()
+    if CheckAction in legal_actions:
+        return CheckAction()
+    return FoldAction()
 
 
 def _raise_margin_by_street(street: int) -> float:
