@@ -508,6 +508,7 @@ def _fallback_action(player: PlayerView):
         action = next(iter(legal_actions))
         return action()
 
+    pot_total = max(1, player.hero.pot_total)
     if player.street <= 0:
         equity = stats.preflop_strength(hero_hand)
     else:
@@ -527,7 +528,6 @@ def _fallback_action(player: PlayerView):
             discard_samples=max(4, discard_samples // 2),
         )
         equity = quick_equity
-    pot_total = max(1, player.hero.pot_total)
     pot_odds = pot_odds_to_call(player.hero.continue_cost, pot_total)
     raise_margin = _raise_margin_by_street(player.street)
     call_margin = _call_margin_by_street(player.street)
