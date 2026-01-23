@@ -217,6 +217,10 @@ def _load_param_file() -> Mapping[str, Tuple[float, ...]]:
         "bluff_weakness_threshold",
         ("bluff_weakness_threshold",),
     )
+    _maybe_group(
+        "bluff_disable_behind",
+        ("bluff_disable_behind",),
+    )
     return grouped
 
 
@@ -307,7 +311,7 @@ _TURN_RAISE_TIME_MULT = _load_float_list(
 _DISCARD_BLUFF_RATE = _load_float_list(
     "NEUROPOKER_DISCARD_BLUFF_RATE",
     1,
-    (0.08,),
+    (0.008,),
     param_key="discard_bluff_rate",
     param_values=_PARAM_VALUES,
 )[0]
@@ -379,6 +383,13 @@ _BLUFF_WEAKNESS_THRESHOLD = _load_float_list(
     1,
     (0.08,),
     param_key="bluff_weakness_threshold",
+    param_values=_PARAM_VALUES,
+)[0]
+_BLUFF_DISABLE_BEHIND = _load_float_list(
+    "NEUROPOKER_BLUFF_DISABLE_BEHIND",
+    1,
+    (200.0,),
+    param_key="bluff_disable_behind",
     param_values=_PARAM_VALUES,
 )[0]
 
@@ -596,8 +607,14 @@ def update_policy_from_round(player: PlayerView) -> None:
         return
     delta = getattr(player.hero, "delta", 0)
     reward = max(-1.0, min(1.0, delta / 100.0))
+    lr = _POLICY_LR
+    bluff_cls, _ = _policy_classes()
+    if policy_class is bluff_cls:
+        call_rate = _opponent_call_rate(getattr(player, "street", None))
+        if call_rate > 0.0:
+            lr *= max(0.1, 1.0 - min(0.8, call_rate))
     stats_bucket = _POLICY_STATS[policy_key]
-    stats_bucket["avg"] += _POLICY_LR * (reward - stats_bucket["avg"])
+    stats_bucket["avg"] += lr * (reward - stats_bucket["avg"])
     stats_bucket["count"] += 1.0
 
 
@@ -660,13 +677,30 @@ def _opponent_weakness_score(player: PlayerView) -> float:
     return score
 
 
-def _bluff_threshold() -> float:
+def _opponent_bluff_adjustment(player: PlayerView) -> float:
+    fold_rate = _opponent_fold_rate(player.street, None)
+    range_bucket = _OPPONENT_RANGE_MODEL["by_street"].get(player.street, {})
+    total = range_bucket.get("total", 0.0)
+    raises = range_bucket.get("raises", 0.0)
+    raise_rate = raises / total if total >= 5 else None
+    bias = 0.0
+    if fold_rate >= 0.45:
+        bias -= 0.04
+    elif 0.0 < fold_rate <= 0.2:
+        bias += 0.04
+    if raise_rate is not None and raise_rate >= 0.45:
+        bias += 0.02
+    return bias
+
+
+def _bluff_threshold(player: PlayerView) -> float:
     _ensure_policy_stats()
     bluff_cls, tight_cls = _policy_classes()
     bluff_avg = _POLICY_STATS[_policy_key(bluff_cls)]["avg"]
     tight_avg = _POLICY_STATS[_policy_key(tight_cls)]["avg"]
     bias = max(-0.05, min(0.05, (bluff_avg - tight_avg) * 0.2))
-    return max(0.0, _BLUFF_WEAKNESS_THRESHOLD - bias)
+    opponent_bias = _opponent_bluff_adjustment(player)
+    return max(0.0, _BLUFF_WEAKNESS_THRESHOLD - bias + opponent_bias)
 
 
 def _choose_policy_for_round(player: PlayerView, equity: float):
@@ -674,9 +708,16 @@ def _choose_policy_for_round(player: PlayerView, equity: float):
     if equity >= _TIGHT_EQUITY_THRESHOLD:
         return tight_cls
     weakness = _opponent_weakness_score(player)
-    if weakness >= _bluff_threshold():
+    if weakness >= _bluff_threshold(player) and _bluff_allowed(player):
         return bluff_cls
     return None
+
+
+def _bluff_allowed(player: PlayerView) -> bool:
+    if _BLUFF_DISABLE_BEHIND <= 0:
+        return True
+    bankroll = getattr(player.hero, "bankroll", 0)
+    return bankroll >= -_BLUFF_DISABLE_BEHIND
 
 
 def play(bot):
@@ -687,13 +728,15 @@ def play(bot):
     instance from skeleton.actions.
     """
     policy_class = _select_round_policy(bot)
-    if not policy_class:
-        equity = _estimate_policy_equity(bot)
-        policy_class = _choose_policy_for_round(bot, equity)
-        if policy_class:
+    if not policy_class and bot.street <= 0:
+        policy_class = _maybe_set_policy(bot)
+    if not policy_class and _discard_action_required(bot):
+        policy_class = _maybe_set_policy(bot)
+        if not policy_class:
+            policy_class = _policy_classes()[1]
             bot.hero.policy_class = policy_class
             bot.hero.policy_round = getattr(bot, "round_num", 0)
-            bot.hero.discard_bluff = policy_class.__name__ == "BluffPolicy"
+            bot.hero.discard_bluff = False
     if policy_class:
         return policy_class.play(bot)
     from skeleton.actions import CheckAction, CallAction, FoldAction
@@ -707,6 +750,25 @@ def play(bot):
     if CheckAction in legal_actions:
         return CheckAction()
     return FoldAction()
+
+
+def _maybe_set_policy(player: PlayerView):
+    equity = _estimate_policy_equity(player)
+    policy_class = _choose_policy_for_round(player, equity)
+    if policy_class:
+        player.hero.policy_class = policy_class
+        player.hero.policy_round = getattr(player, "round_num", 0)
+        player.hero.discard_bluff = policy_class.__name__ == "BluffPolicy"
+    return policy_class
+
+
+def _discard_action_required(player: PlayerView) -> bool:
+    legal_actions = set(player.hero.legal_actions)
+    try:
+        from skeleton.actions import DiscardAction
+    except Exception:
+        return False
+    return DiscardAction in legal_actions
 
 
 def _raise_margin_by_street(street: int) -> float:
@@ -1077,6 +1139,28 @@ def _opponent_fold_rate(street: int, bucket_key: Optional[str]) -> float:
     return folds / total
 
 
+def _opponent_call_rate(street: Optional[int]) -> float:
+    if street is None:
+        total = 0.0
+        calls = 0.0
+        for bucket in _OPPONENT_BET_MODEL["by_street"].values():
+            for counts in bucket.values():
+                total += counts.get("fold", 0.0) + counts.get("call", 0.0)
+                calls += counts.get("call", 0.0)
+    else:
+        bucket = _OPPONENT_BET_MODEL["by_street"].get(street)
+        if not bucket:
+            return 0.0
+        total = 0.0
+        calls = 0.0
+        for counts in bucket.values():
+            total += counts.get("fold", 0.0) + counts.get("call", 0.0)
+            calls += counts.get("call", 0.0)
+    if total < 5:
+        return 0.0
+    return calls / total
+
+
 def record_opponent_bet_response(street: int, bet_size: int, pot_total: int, folded: bool) -> None:
     street_bucket = _OPPONENT_BET_MODEL["by_street"].setdefault(street, {})
     bucket_key = _bet_size_bucket(bet_size, pot_total)
@@ -1189,7 +1273,7 @@ def _should_bluff(street: int, board_cards: Sequence[str], allow_bluff: bool = T
     if not allow_bluff:
         return False
     if street == 0:
-        return random.random() < 0.06
+        return random.random() < 0.006
     if street < 3:
         return False
     board_int = stats._ensure_int_cards(list(board_cards))
@@ -1197,7 +1281,7 @@ def _should_bluff(street: int, board_cards: Sequence[str], allow_bluff: bool = T
         return False
     if _board_is_flushy(board_int):
         return False
-    return random.random() < 0.06
+    return random.random() < 0.006
 
 
 def _fast_discard_index(hero_hand: Sequence[str]) -> int:

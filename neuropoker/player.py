@@ -136,6 +136,9 @@ class Player(Bot):
         strategy.decay_discard_model()
         strategy.decay_bet_model()
         strategy.decay_range_model()
+        self.hero.policy_class = None
+        self.hero.policy_round = None
+        self.hero.discard_bluff = False
         if self._last_aggressor and self._last_bet_size is not None:
             villain_revealed = bool(self.villain.hand)
             if self.hero.delta > 0 and not villain_revealed:
@@ -152,11 +155,15 @@ class Player(Bot):
                     self._last_bet_pot or 1,
                     False,
                 )
+        if self.hero.delta > 0 and not self.villain.hand and self._last_bet_street is not None:
+            strategy.record_opponent_fold(self._last_bet_street)
         if self.villain.hand:
             if self.hero.delta > 0:
                 strategy.record_opponent_showdown(False)
+                strategy.record_inferred_range(0.0)
             elif self.hero.delta < 0:
                 strategy.record_opponent_showdown(True)
+                strategy.record_inferred_range(1.0)
         if self.round_num % 100 == 1:
             self._log(f"round_over={self.round_num} delta={self.hero.delta}")
 
