@@ -20,3 +20,51 @@ A standard learning rule where connections strengthen when pre- and post-synapti
 
 ## Mimetic Learning (Reverse Hebbian)
 A learning rule that inverts the Hebbian idea by leveraging the (often) invertible structure of the proposed activations. The intent is to use output behavior to infer and reinforce upstream structure, enabling learning that mirrors or reverses standard co-activation dynamics.
+
+## Strategy Variants (Feature Flags)
+To keep experimentation deterministic and single-core safe, strategy variants are toggled via environment flags and default OFF.
+
+### Flags and Precedence
+- `NEUROPOKER_VARIANT_THRESHOLDS=1` (highest priority)
+- `NEUROPOKER_VARIANT_GRAPH=1`
+- `NEUROPOKER_VARIANT_PAIRWISE=1`
+
+If multiple flags are set, precedence is: thresholds → graph → pairwise → baseline.
+
+### Variant A: Pairwise Feature Couplings
+Purpose: add small, deterministic equity bias based on simple pairwise interactions.
+
+Inputs:
+- Hole ranks/suits vs board ranks/suits
+- Simple connectivity of hole ranks
+
+Behavior:
+- Adds a capped equity bias (<= 0.02) based on rank matches, suit matches, and connectivity.
+- No dynamic weights, no randomness, no learning.
+
+### Variant B: Fixed Graph-Style Transform
+Purpose: approximate relational structure without training a GNN.
+
+Inputs:
+- Hole-to-board rank/suit matches
+- Board texture signals (paired/flushy)
+
+Behavior:
+- Uses fixed adjacency-style weights to compute a small equity bias (<= 0.02).
+- Deterministic, no learned parameters.
+
+### Variant C: Exploitative Threshold Tuning
+Purpose: adjust raise/call margins based on opponent fold tendencies.
+
+Inputs:
+- Decayed opponent fold-rate statistics by street
+
+Behavior:
+- Loosens raise/call thresholds when opponent folds too often.
+- Tightens thresholds when opponent rarely folds.
+- No online weight updates beyond existing counters.
+
+### Integration Notes
+- Variants are applied inside `neuropoker/strategy.py` and must remain deterministic.
+- Preflop still avoids Monte Carlo; variants only add small, bounded adjustments.
+- If a variant causes any exception or missing-data condition, the bot falls back to baseline logic.

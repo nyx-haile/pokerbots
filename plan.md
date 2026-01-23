@@ -21,6 +21,61 @@
 - Lightweight logging for runtime diagnostics.
 - Self-play regression harness and evaluation tooling are in place.
 
+## Research & Design Requirements (Ground Truth)
+- Determinism: identical inputs must yield identical outputs; use per-hand seeded randomness only when required.
+- No preflop Monte Carlo; preflop must use fast heuristics/lookup. (`design/preflop.txt`)
+- Single-core only; no multithreading or GPU assumptions. (`documentation/server_environment.md`)
+- No online learning during a live match; any adaptation must be offline or extremely constrained. (`research/self_play_harness_design.md`)
+- Use engine-driven, process-isolated self-play with deterministic seeds and seat swaps for evaluation. (`research/self_play_harness_design.md`)
+- Discard mechanics are central: discard order adds information asymmetry; strategies must model public discard impact. (`research/Developing a Fast Winning Strategy for __Toss or Hold’em__ Pokerbots.pdf`)
+- Stronger hands are more common with 6-board; thresholds must be tighter post-discard. (`research/Strategy Design for a Top-Performing Toss or Hold'em Pokerbot (Pokerbots 2026).pdf`)
+- Prefer exploitative play with opponent modeling and staged computation/caching under tight time limits. (`research/Strategy Design for a Top-Performing Toss or Hold'em Pokerbot (Pokerbots 2026).pdf`)
+
+## Implementation Plan (Extremely Simple Checklist)
+1. **Write down the exact strategy variants we will test (low-risk only).**
+   - Variant A: lightweight pairwise feature couplings (hand-designed interactions, no copulas).
+   - Variant B: fixed graph-style feature transform (no GNN training; deterministic adjacency rules).
+   - Variant C: exploitative threshold tuning driven by opponent stats (no online weight updates).
+2. **Define inputs, outputs, and constraints for each variant.**
+   - Shared inputs (all variants): hole cards (3/2), board cards (0–6), street, pot size, stacks, continue_cost, position/blind, opponent discard stats, opponent bet-response stats.
+   - Shared outputs (all variants): deterministic action choice (Fold/Call/Check/Raise/Discard) with a seeded tie-break roll only when scores are equal; raises must respect min/max bounds.
+   - Shared constraints (all variants): single-core only; deterministic; no preflop MC; per-decision budget target <= 1–2 ms; no online learning during a match.
+   - Variant A (pairwise couplings): compute fixed pairwise features (rank gaps, suitedness, board-texture pairs); feed into a tiny linear scorer; zero dynamic weights.
+   - Variant B (fixed graph transform): build a static adjacency over cards/roles (hole vs board vs discard); aggregate with fixed weights; no training step.
+   - Variant C (exploitative thresholds): adjust raise/call/fold thresholds based on decayed opponent stats; no parameter updates beyond counters.
+3. **Add feature flags for each variant.**
+   - Flags (defaults OFF):
+     - `NEUROPOKER_VARIANT_PAIRWISE=1` enables Variant A.
+     - `NEUROPOKER_VARIANT_GRAPH=1` enables Variant B.
+     - `NEUROPOKER_VARIANT_THRESHOLDS=1` enables Variant C.
+   - Precedence order (if multiple set): thresholds → graph → pairwise → baseline.
+   - On any error or missing data, log the fallback and use baseline action selection.
+4. **Extend evaluation logging for each decision.**
+   - Per-decision log line (single line, stable keys):
+     - `STRAT` (variant id), `street`, `equity`, `pot_odds`, `action`, `raise_to`, `decision_ms`, `legal_actions`.
+   - Per-match summary:
+     - EV/hand, variance, Sharpe ratio.
+     - Action frequencies by street and position.
+     - Latency percentiles (p50/p90/p99).
+     - Fallback counts and reasons (illegal raise, missing data, exception).
+5. **Update harness to surface required metrics.**
+   - Compute EV/hand, variance, Sharpe ratio, win rate, and per-street action counts.
+   - Emit both JSON + text summaries with seeds, bot versions, and strategy flags.
+   - Record timeouts, illegal-action fallbacks, and exception counts per bot.
+   - Enforce deterministic seeds and seat swaps for every suite run.
+6. **Run short sanity checks (fast).**
+   - 10×1k seat-swapped vs baseline for each variant.
+   - Fail fast on timeouts, illegal actions, or latency regressions.
+7. **Run full stability checks (slow).**
+   - 10×10k seat-swapped vs baseline for top 1–2 variants.
+   - Confirm EV gain + acceptable variance + latency within budget.
+8. **Select the winner and lock it in.**
+   - Choose the variant with highest EV/hand that meets all constraints.
+   - Keep a rollback flag to revert to baseline instantly.
+9. **Document outcomes.**
+   - Record results, selected default, and flags in `documentation/notes.md`.
+   - Note any tuning parameters and their rationale.
+
 ## Phase 0: Self-play regression harness (Priority 0)
 - Build an engine-driven match runner that spawns two bots as separate processes (DONE).
 - Add deterministic seed control for reproducible runs; log the seed per match (DONE).
@@ -33,12 +88,12 @@
 - Ensure pkrbot install is present and working on the server (offline install or bundled wheel as needed). (DONE)
 - Review discard-equity simulations to cover opponent discard and future board cards; update notes when modeling assumptions change. (DONE)
 - Audit all bots for scrimmage server hardware constraints (single CPU core, no GPU) and remove unsupported assumptions. (DONE)
-- Cap thread usage and disable GPU-optional code paths where applicable (e.g., set OMP/MKL/BLAS thread caps, skip GPU imports). (DONE)
+- Remove multi-threaded/parallel code paths; single-core only. (DONE)
 
 ### Server compliance checklist (per file)
 - `neuropoker/player.py`: ensure no multi-process spawns; set conservative runtime caps for single-core CPU. (DONE)
 - `neuropoker/strategy.py`: avoid heavy loops per decision; add early exits/low-sample fallbacks for single-core runtime. (DONE)
-- `neuropoker/stats.py`: enforce thread caps for BLAS/OpenMP backends; keep CPU-only eval path. (DONE)
+- `neuropoker/stats.py`: keep CPU-only eval path and single-core Monte Carlo. (DONE)
 - `neuropoker/scripts/ensure_pkrbot.py`: verify wheel install path works offline and is CPU-only (if needed). (DONE)
 - `engine-2026/config.py`: confirm bot configs do not assume multi-core or GPU resources. (DONE)
 
@@ -75,7 +130,7 @@
 P0. Build self-play regression harness (engine-driven process isolation, deterministic seeds, seat swaps/duplicates, metrics/logging). (DONE)
 P1. Ensure pkrbot is installed and working on the server (baseline correctness/speed). (DONE)
 P2. Review discard-equity simulations to cover opponent discard and future board cards. (DONE)
-P2.5. Update all bots to comply with server hardware constraints (single CPU core, no GPU) and enforce thread caps. (DONE)
+P2.5. Update all bots to comply with server hardware constraints (single CPU core, no GPU) and remove parallelism. (DONE)
 P4. Strengthen preflop with a tuned 3-card LUT or bucketed heuristic. (DONE)
 P5. Tighten value thresholds for post-discard play with 6-card boards. (DONE)
 P6. Add board-texture-aware value betting and pot control. (DONE)

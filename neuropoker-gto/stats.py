@@ -2,6 +2,7 @@
 import os
 import random
 import time
+import multiprocessing
 from itertools import combinations
 from functools import lru_cache
 try:
@@ -26,7 +27,6 @@ _RANKS = "23456789TJQKA"
 _SUITS = "cdhs"
 _SUIT_TO_INT = {"s": 1, "h": 2, "d": 4, "c": 8}
 _FULL_DECK = [rank + suit for rank in _RANKS for suit in _SUITS]
-_PKRBOT_CARD_CACHE = {card: pkrbot.Card(card) for card in _FULL_DECK} if pkrbot is not None else {}
 
 
 def _card_to_str(card) -> str:
@@ -73,6 +73,8 @@ _DEFAULT_DISCARD_SECONDS = _env_float("NEUROPOKER_DISCARD_MAX_SECONDS", 0.02)
 _DEFAULT_DISCARD_SAMPLES = _env_int("NEUROPOKER_DISCARD_SAMPLES", 100)
 _DEFAULT_EQUITY_SAMPLES = _env_int("NEUROPOKER_EQUITY_SAMPLES", 120)
 _DEFAULT_EQUITY_SECONDS = _env_float("NEUROPOKER_EQUITY_MAX_SECONDS", 0.03)
+_DEFAULT_MC_WORKERS = _env_int("NEUROPOKER_MC_WORKERS", 2)
+_DEFAULT_MC_PARALLEL_MIN = _env_int("NEUROPOKER_MC_PARALLEL_MIN", 200)
 
 class DeckEmptyException(Exception):
     pass
@@ -193,7 +195,7 @@ def _pokerstove_best_eval(cards):
 
 def _pkrbot_best_eval(cards):
     str_cards = _ensure_str_cards(cards)
-    return pkrbot.evaluate([_PKRBOT_CARD_CACHE[card] for card in str_cards])
+    return pkrbot.evaluate([pkrbot.Card(card) for card in str_cards])
 
 def eval_best_8(cards8_str):
     # cards8_str is a list of card str, eg ['Ah', 'Ks', '7h']
@@ -516,14 +518,25 @@ def _estimate_equity_cached(
     if remaining_board + 2 > len(deck):
         return 0.5
 
-    wins, losses, ties, runs = _mc_equity_serial(
-        hero_int,
-        board_int,
-        deck,
-        remaining_board,
-        samples,
-        max_seconds,
-    )
+    use_parallel = _DEFAULT_MC_WORKERS > 1 and samples >= _DEFAULT_MC_PARALLEL_MIN
+    if use_parallel:
+        wins, losses, ties, runs = _parallel_mc_equity(
+            hero_int,
+            board_int,
+            deck,
+            remaining_board,
+            samples,
+            max_seconds,
+        )
+    else:
+        wins, losses, ties, runs = _mc_equity_serial(
+            hero_int,
+            board_int,
+            deck,
+            remaining_board,
+            samples,
+            max_seconds,
+        )
     total = wins + losses + ties
     if total == 0:
         return 0.5
@@ -539,23 +552,20 @@ def _mc_equity_serial(
     max_seconds: float,
 ) -> Tuple[int, int, int, int]:
     rng = random.Random()
-    sample = rng.sample
-    eval_best = evaluate_best
-    compare = compare_evals
-    board_base = list(board_int)
     wins = losses = ties = 0
     runs = 0
     start_time = time.perf_counter()
     for _ in range(samples):
         if max_seconds > 0 and time.perf_counter() - start_time >= max_seconds:
             break
-        drawn = sample(deck, 2 + remaining_board)
-        opp_hand = drawn[:2]
-        board_fill = drawn[2:]
-        final_board = board_base + board_fill
-        hero_rank = eval_best(final_board, hero_int)
-        villain_rank = eval_best(final_board, opp_hand)
-        result = compare(hero_rank, villain_rank)
+        sample = rng.sample(deck, 2 + remaining_board)
+        opp_hand = sample[:2]
+        board_fill = sample[2:]
+        final_board = list(board_int)
+        final_board.extend(board_fill)
+        hero_rank = evaluate_best(final_board, hero_int)
+        villain_rank = evaluate_best(final_board, list(opp_hand))
+        result = compare_evals(hero_rank, villain_rank)
         if result > 0:
             wins += 1
         elif result < 0:
@@ -566,6 +576,70 @@ def _mc_equity_serial(
     return wins, losses, ties, runs
 
 
+def _mc_equity_worker(args) -> Tuple[int, int, int, int]:
+    hero_int, board_int, deck, remaining_board, samples, seed = args
+    rng = random.Random(seed)
+    wins = losses = ties = 0
+    for _ in range(samples):
+        sample = rng.sample(deck, 2 + remaining_board)
+        opp_hand = sample[:2]
+        board_fill = sample[2:]
+        final_board = list(board_int)
+        final_board.extend(board_fill)
+        hero_rank = evaluate_best(final_board, hero_int)
+        villain_rank = evaluate_best(final_board, list(opp_hand))
+        result = compare_evals(hero_rank, villain_rank)
+        if result > 0:
+            wins += 1
+        elif result < 0:
+            losses += 1
+        else:
+            ties += 1
+    return wins, losses, ties, samples
+
+
+def _parallel_mc_equity(
+    hero_int: List[int],
+    board_int: List[int],
+    deck: List[int],
+    remaining_board: int,
+    samples: int,
+    max_seconds: float,
+) -> Tuple[int, int, int, int]:
+    workers = max(1, min(_DEFAULT_MC_WORKERS, (multiprocessing.cpu_count() or 2)))
+    if workers <= 1:
+        return _mc_equity_serial(hero_int, board_int, deck, remaining_board, samples, max_seconds)
+
+    chunk = max(1, samples // workers)
+    counts = [chunk] * workers
+    counts[0] += samples - sum(counts)
+    seeds = [random.randrange(1 << 30) for _ in range(workers)]
+
+    start_time = time.perf_counter()
+    wins = losses = ties = runs = 0
+    args = [
+        (hero_int, board_int, deck, remaining_board, counts[i], seeds[i])
+        for i in range(workers)
+        if counts[i] > 0
+    ]
+    ctx = multiprocessing.get_context("spawn")
+    pool = ctx.Pool(processes=len(args))
+    terminated = False
+    try:
+        for w, l, t, r in pool.imap_unordered(_mc_equity_worker, args):
+            wins += w
+            losses += l
+            ties += t
+            runs += r
+            if max_seconds > 0 and time.perf_counter() - start_time >= max_seconds:
+                pool.terminate()
+                terminated = True
+                break
+    finally:
+        if not terminated:
+            pool.close()
+        pool.join()
+    return wins, losses, ties, runs
 
 
 def estimate_showdown_equity(my_hand, opponent_range, community_cards):

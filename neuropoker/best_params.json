@@ -1,0 +1,24 @@
+{
+  "best_params": {
+    "bluff_raise_frac": 0.3504202849622604,
+    "call_light": 0.3956342351591873,
+    "call_margin_post": 0.10808980776830632,
+    "call_margin_pre": 0.06920143638037951,
+    "call_margin_river": 0.060043719510991585,
+    "call_margin_turn": 0.10938660891733706,
+    "call_medium": 0.49292158677542947,
+    "call_strong": 0.5588542315781287,
+    "raise_light": 0.41473063759710294,
+    "raise_margin_post": 0.11306667791005937,
+    "raise_margin_pre": 0.07169253113987664,
+    "raise_margin_river": 0.24619545823737454,
+    "raise_margin_turn": 0.28410040795136143,
+    "raise_medium": 0.6513733043985788,
+    "raise_size_light": 0.3846304550512081,
+    "raise_size_medium": 0.42586368872826474,
+    "raise_size_strong": 0.4568983680559108,
+    "raise_strong": 0.6927219621485874
+  },
+  "best_value": 38.169,
+  "study_name": "ptr"
+}
