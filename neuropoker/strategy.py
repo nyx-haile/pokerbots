@@ -92,7 +92,7 @@ def _load_float_list(
     except ValueError:
         return default
     for value in values:
-        if value <= 0:
+        if value < 0:
             return default
     return values
 
@@ -112,39 +112,38 @@ def _load_param_file() -> Mapping[str, Tuple[float, ...]]:
     params = data.get("best_params", data)
     if not isinstance(params, dict):
         return {}
-    try:
-        return {
-            "preflop_raise_thresholds": (
-                float(params["raise_strong"]),
-                float(params["raise_medium"]),
-                float(params["raise_light"]),
-            ),
-            "preflop_call_thresholds": (
-                float(params["call_strong"]),
-                float(params["call_medium"]),
-                float(params["call_light"]),
-            ),
-            "raise_size_fractions": (
-                float(params["raise_size_strong"]),
-                float(params["raise_size_medium"]),
-                float(params["raise_size_light"]),
-            ),
-            "bluff_raise_fraction": (float(params["bluff_raise_frac"]),),
-            "raise_margin_by_street": (
-                float(params["raise_margin_pre"]),
-                float(params["raise_margin_post"]),
-                float(params["raise_margin_turn"]),
-                float(params["raise_margin_river"]),
-            ),
-            "call_margin_by_street": (
-                float(params["call_margin_pre"]),
-                float(params["call_margin_post"]),
-                float(params["call_margin_turn"]),
-                float(params["call_margin_river"]),
-            ),
-        }
-    except (KeyError, TypeError, ValueError):
-        return {}
+    grouped = {}
+    def _maybe_group(key, keys):
+        try:
+            values = tuple(float(params[name]) for name in keys)
+        except (KeyError, TypeError, ValueError):
+            return
+        grouped[key] = values
+    _maybe_group(
+        "preflop_raise_thresholds",
+        ("raise_strong", "raise_medium", "raise_light"),
+    )
+    _maybe_group(
+        "preflop_call_thresholds",
+        ("call_strong", "call_medium", "call_light"),
+    )
+    _maybe_group(
+        "raise_size_fractions",
+        ("raise_size_strong", "raise_size_medium", "raise_size_light"),
+    )
+    _maybe_group(
+        "bluff_raise_fraction",
+        ("bluff_raise_frac",),
+    )
+    _maybe_group(
+        "raise_margin_by_street",
+        ("raise_margin_pre", "raise_margin_post", "raise_margin_turn", "raise_margin_river"),
+    )
+    _maybe_group(
+        "call_margin_by_street",
+        ("call_margin_pre", "call_margin_post", "call_margin_turn", "call_margin_river"),
+    )
+    return grouped
 
 
 _PARAM_VALUES = _load_param_file()
