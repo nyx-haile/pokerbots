@@ -53,3 +53,19 @@ python3 tools/evaluate_harness.py --manifest tools/evaluation_manifest.json
 
 The evaluation runner uses `tools/run_suite.py` to compare the current bot to
 baselines and writes `evaluation_summary.json` under `evaluations/`.
+
+## Optuna Tuning
+
+```bash
+python3 tools/optuna_tune.py \
+  --bot-a ./neuropoker \
+  --bot-b ./neuropoker-pokerstove/neuropoker \
+  --engine-dir engine-2026 \
+  --rounds 1000 \
+  --matches 2 \
+  --trials 20 \
+  --output-dir tuning
+```
+
+The tuner writes trial outputs under `tuning/optuna_<timestamp>/` along with
+`best_params.json` containing the best preflop threshold values.

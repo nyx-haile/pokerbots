@@ -70,8 +70,12 @@ def main():
     parser.add_argument("--seed-start", type=int, default=1, help="Starting seed")
     parser.add_argument("--output-dir", default="runs", help="Output directory")
     parser.add_argument("--match-timeout", type=int, default=900, help="Timeout per match in seconds")
+    parser.add_argument("--engine-python", default=None, help="Python executable for the engine")
     args = parser.parse_args()
 
+    args.engine_dir = os.path.abspath(args.engine_dir)
+    args.bot_a = os.path.abspath(args.bot_a)
+    args.bot_b = os.path.abspath(args.bot_b)
     base_dir = os.path.abspath(args.output_dir)
     if not os.path.exists(base_dir):
         os.makedirs(base_dir)
@@ -92,12 +96,16 @@ def main():
             sys.executable,
             run_match_script,
             "--engine-dir", args.engine_dir,
+            "--engine-python", args.engine_python or "",
             "--bot-a", args.bot_a,
             "--bot-b", args.bot_b,
             "--rounds", str(args.rounds),
             "--seed", str(seed),
             "--output-dir", match_dir,
         ]
+        if not args.engine_python:
+            cmd.remove("--engine-python")
+            cmd.remove("")
         code, output, timed_out = _run_match(cmd, cwd=suite_dir, timeout=args.match_timeout)
         with open(os.path.join(match_dir, "run_match_stdout.txt"), "w") as handle:
             handle.write(output)
@@ -140,12 +148,16 @@ def main():
                 sys.executable,
                 run_match_script,
                 "--engine-dir", args.engine_dir,
+                "--engine-python", args.engine_python or "",
                 "--bot-a", args.bot_b,
                 "--bot-b", args.bot_a,
                 "--rounds", str(args.rounds),
                 "--seed", str(seed),
                 "--output-dir", swap_dir,
             ]
+            if not args.engine_python:
+                swap_cmd.remove("--engine-python")
+                swap_cmd.remove("")
             swap_code, swap_out, swap_timed_out = _run_match(swap_cmd, cwd=suite_dir, timeout=args.match_timeout)
             with open(os.path.join(swap_dir, "run_match_stdout.txt"), "w") as handle:
                 handle.write(swap_out)

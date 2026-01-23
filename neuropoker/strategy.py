@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+import json
 import math
 import os
 import random
@@ -26,9 +27,168 @@ _OPPONENT_RANGE_MODEL = {
 }
 _USE_RANDOM_POLICY = os.environ.get("NEUROPOKER_USE_RANDOM_POLICY", "0") == "1"
 _DISABLE_PREFLOP_MIX = os.environ.get("NEUROPOKER_DISABLE_PREFLOP_MIX", "0") == "1"
+_VARIANT_PAIRWISE = os.environ.get("NEUROPOKER_VARIANT_PAIRWISE", "0") == "1"
+_VARIANT_GRAPH = os.environ.get("NEUROPOKER_VARIANT_GRAPH", "0") == "1"
+_VARIANT_THRESHOLDS = os.environ.get("NEUROPOKER_VARIANT_THRESHOLDS", "0") == "1"
 _RANDOM_POLICY_LR = 0.02
 _RANDOM_POLICY_HIDDEN = 16
 _LAST_HIDDEN = None
+
+
+def active_variant_id() -> str:
+    if _VARIANT_THRESHOLDS:
+        return "thresholds"
+    if _VARIANT_GRAPH:
+        return "graph"
+    if _VARIANT_PAIRWISE:
+        return "pairwise"
+    return "baseline"
+
+
+def _load_thresholds(
+    env_key: str,
+    default: Tuple[float, float, float],
+    param_key: Optional[str] = None,
+    param_values: Optional[Mapping[str, float]] = None,
+) -> Tuple[float, float, float]:
+    if param_key and param_values:
+        raw = param_values.get(param_key)
+        if raw is not None:
+            return raw
+    raw = os.environ.get(env_key)
+    if not raw:
+        return default
+    parts = [part.strip() for part in raw.split(",") if part.strip()]
+    if len(parts) != 3:
+        return default
+    try:
+        values = tuple(float(part) for part in parts)
+    except ValueError:
+        return default
+    if values[0] < values[1] or values[1] < values[2]:
+        return default
+    return values
+
+
+def _load_float_list(
+    env_key: str,
+    count: int,
+    default: Tuple[float, ...],
+    param_key: Optional[str] = None,
+    param_values: Optional[Mapping[str, float]] = None,
+) -> Tuple[float, ...]:
+    if param_key and param_values:
+        raw = param_values.get(param_key)
+        if raw is not None:
+            return raw
+    raw = os.environ.get(env_key)
+    if not raw:
+        return default
+    parts = [part.strip() for part in raw.split(",") if part.strip()]
+    if len(parts) != count:
+        return default
+    try:
+        values = tuple(float(part) for part in parts)
+    except ValueError:
+        return default
+    for value in values:
+        if value <= 0:
+            return default
+    return values
+
+
+def _load_param_file() -> Mapping[str, Tuple[float, ...]]:
+    filename = os.environ.get("NEUROPOKER_PARAM_FILE", "best_params.json")
+    path = os.path.join(os.path.dirname(__file__), filename)
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, "r") as handle:
+            data = json.load(handle)
+    except (ValueError, OSError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    params = data.get("best_params", data)
+    if not isinstance(params, dict):
+        return {}
+    try:
+        return {
+            "preflop_raise_thresholds": (
+                float(params["raise_strong"]),
+                float(params["raise_medium"]),
+                float(params["raise_light"]),
+            ),
+            "preflop_call_thresholds": (
+                float(params["call_strong"]),
+                float(params["call_medium"]),
+                float(params["call_light"]),
+            ),
+            "raise_size_fractions": (
+                float(params["raise_size_strong"]),
+                float(params["raise_size_medium"]),
+                float(params["raise_size_light"]),
+            ),
+            "bluff_raise_fraction": (float(params["bluff_raise_frac"]),),
+            "raise_margin_by_street": (
+                float(params["raise_margin_pre"]),
+                float(params["raise_margin_post"]),
+                float(params["raise_margin_turn"]),
+                float(params["raise_margin_river"]),
+            ),
+            "call_margin_by_street": (
+                float(params["call_margin_pre"]),
+                float(params["call_margin_post"]),
+                float(params["call_margin_turn"]),
+                float(params["call_margin_river"]),
+            ),
+        }
+    except (KeyError, TypeError, ValueError):
+        return {}
+
+
+_PARAM_VALUES = _load_param_file()
+
+_PREFLOP_RAISE_THRESHOLDS = _load_thresholds(
+    "NEUROPOKER_PREFLOP_RAISE_THRESHOLDS",
+    (0.7213, 0.6632, 0.5000),
+    param_key="preflop_raise_thresholds",
+    param_values=_PARAM_VALUES,
+)
+_PREFLOP_CALL_THRESHOLDS = _load_thresholds(
+    "NEUROPOKER_PREFLOP_CALL_THRESHOLDS",
+    (0.6275, 0.5389, 0.3478),
+    param_key="preflop_call_thresholds",
+    param_values=_PARAM_VALUES,
+)
+_RAISE_SIZE_FRACTIONS = _load_float_list(
+    "NEUROPOKER_RAISE_SIZE_FRACTIONS",
+    3,
+    (1.0, 0.5, 0.33),
+    param_key="raise_size_fractions",
+    param_values=_PARAM_VALUES,
+)
+_BLUFF_RAISE_FRACTION = _load_float_list(
+    "NEUROPOKER_BLUFF_RAISE_FRACTION",
+    1,
+    (0.33,),
+    param_key="bluff_raise_fraction",
+    param_values=_PARAM_VALUES,
+)[0]
+_RAISE_MARGIN_BY_STREET = _load_float_list(
+    "NEUROPOKER_RAISE_MARGIN_BY_STREET",
+    4,
+    (0.2, 0.15, 0.18, 0.16),
+    param_key="raise_margin_by_street",
+    param_values=_PARAM_VALUES,
+)
+_CALL_MARGIN_BY_STREET = _load_float_list(
+    "NEUROPOKER_CALL_MARGIN_BY_STREET",
+    4,
+    (0.05, 0.03, 0.05, 0.06),
+    param_key="call_margin_by_street",
+    param_values=_PARAM_VALUES,
+)
 
 
 @dataclass(frozen=True)
@@ -302,10 +462,21 @@ def _fallback_action(player: PlayerView):
     discard_bias = _opponent_discard_bias(player.street)
     range_bias = _opponent_range_bias(player.street)
     texture_raise, texture_call, raise_cap_mult = _board_texture_adjustments(board_cards)
+    variant_id = active_variant_id()
+    equity_bias, raise_variant, call_variant = _variant_adjustments(
+        variant_id,
+        player,
+        hero_hand,
+        board_cards,
+    )
+    if player.street <= 0 and equity_bias:
+        equity = max(0.0, min(1.0, equity + equity_bias))
     raise_margin += discard_bias
     call_margin += discard_bias
     raise_margin += range_bias
     call_margin += range_bias
+    raise_margin += raise_variant
+    call_margin += call_variant
 
     if _USE_RANDOM_POLICY:
         policy_bias = _policy_bias(player, equity, pot_odds)
@@ -342,6 +513,8 @@ def _fallback_action(player: PlayerView):
                 max_seconds=max_seconds,
                 discard_samples=discard_samples,
             )
+        if equity_bias:
+            equity = max(0.0, min(1.0, equity + equity_bias))
 
     if RaiseAction in legal_actions:
         min_raise, max_raise = getattr(player.hero, "raise_bounds", (0, 0))
@@ -376,22 +549,22 @@ def _fallback_action(player: PlayerView):
 
 def _raise_margin_by_street(street: int) -> float:
     if street <= 0:
-        return 0.2
+        return _RAISE_MARGIN_BY_STREET[0]
     if street <= 3:
-        return 0.15
+        return _RAISE_MARGIN_BY_STREET[1]
     if street <= 4:
-        return 0.18
-    return 0.16
+        return _RAISE_MARGIN_BY_STREET[2]
+    return _RAISE_MARGIN_BY_STREET[3]
 
 
 def _call_margin_by_street(street: int) -> float:
     if street <= 0:
-        return 0.05
+        return _CALL_MARGIN_BY_STREET[0]
     if street <= 3:
-        return 0.03
+        return _CALL_MARGIN_BY_STREET[1]
     if street <= 4:
-        return 0.05
-    return 0.06
+        return _CALL_MARGIN_BY_STREET[2]
+    return _CALL_MARGIN_BY_STREET[3]
 
 
 def _preflop_open_decision(
@@ -405,14 +578,16 @@ def _preflop_open_decision(
 ):
     from skeleton.actions import CallAction, RaiseAction, CheckAction, FoldAction
     roll = _preflop_roll(player)
+    raise_strong, raise_medium, raise_light = _PREFLOP_RAISE_THRESHOLDS
+    call_strong, call_medium, call_light = _PREFLOP_CALL_THRESHOLDS
     if RaiseAction in legal_actions:
-        if equity >= 0.7:
+        if equity >= raise_strong:
             raise_prob = 0.7
             bucket = "raise_strong"
-        elif equity >= 0.62:
+        elif equity >= raise_medium:
             raise_prob = 0.45
             bucket = "raise_medium"
-        elif equity >= 0.56:
+        elif equity >= raise_light:
             raise_prob = 0.25
             bucket = "raise_light"
         else:
@@ -427,13 +602,13 @@ def _preflop_open_decision(
                 return RaiseAction(target)
 
     if CallAction in legal_actions:
-        if equity >= 0.52:
+        if equity >= call_strong:
             call_prob = 0.75
             bucket = "call_strong"
-        elif equity >= 0.47:
+        elif equity >= call_medium:
             call_prob = 0.5
             bucket = "call_medium"
-        elif equity >= 0.42:
+        elif equity >= call_light:
             call_prob = 0.25
             bucket = "call_light"
         else:
@@ -480,6 +655,77 @@ def _board_texture_adjustments(board_cards: Sequence[str]) -> Tuple[float, float
     return 0.0, 0.0, 1.0
 
 
+def _variant_adjustments(
+    variant_id: str,
+    player: PlayerView,
+    hero_hand: Sequence[str],
+    board_cards: Sequence[str],
+) -> Tuple[float, float, float]:
+    if variant_id == "pairwise":
+        return _pairwise_adjustments(hero_hand, board_cards)
+    if variant_id == "graph":
+        return _graph_adjustments(hero_hand, board_cards)
+    if variant_id == "thresholds":
+        return _threshold_adjustments(player)
+    return 0.0, 0.0, 0.0
+
+
+def _pairwise_adjustments(
+    hero_hand: Sequence[str],
+    board_cards: Sequence[str],
+) -> Tuple[float, float, float]:
+    if not board_cards:
+        return 0.0, 0.0, 0.0
+    hole_int = stats._ensure_int_cards(list(hero_hand))
+    if not hole_int:
+        return 0.0, 0.0, 0.0
+    board_int = stats._ensure_int_cards(list(board_cards))
+    board_ranks = {stats.Card.get_rank_int(card) for card in board_int}
+    board_suits = {stats.Card.get_suit_int(card) for card in board_int}
+    hole_ranks = [stats.Card.get_rank_int(card) for card in hole_int]
+    hole_suits = [stats.Card.get_suit_int(card) for card in hole_int]
+    pair_match = sum(1 for rank in hole_ranks if rank in board_ranks)
+    suit_match = sum(1 for suit in hole_suits if suit in board_suits)
+    connected = 1 if max(hole_ranks) - min(hole_ranks) <= 4 else 0
+    equity_bias = min(0.02, 0.008 * pair_match + 0.004 * suit_match + 0.004 * connected)
+    return equity_bias, 0.0, 0.0
+
+
+def _graph_adjustments(
+    hero_hand: Sequence[str],
+    board_cards: Sequence[str],
+) -> Tuple[float, float, float]:
+    if not board_cards:
+        return 0.0, 0.0, 0.0
+    hole_int = stats._ensure_int_cards(list(hero_hand))
+    if not hole_int:
+        return 0.0, 0.0, 0.0
+    board_int = stats._ensure_int_cards(list(board_cards))
+    equity_bias = 0.0
+    for hcard in hole_int:
+        hrank = stats.Card.get_rank_int(hcard)
+        hsuit = stats.Card.get_suit_int(hcard)
+        for bcard in board_int:
+            if hrank == stats.Card.get_rank_int(bcard):
+                equity_bias += 0.003
+            if hsuit == stats.Card.get_suit_int(bcard):
+                equity_bias += 0.002
+    if _board_is_paired(board_int):
+        equity_bias += 0.004
+    if _board_is_flushy(board_int):
+        equity_bias += 0.004
+    return min(0.02, equity_bias), 0.0, 0.0
+
+
+def _threshold_adjustments(player: PlayerView) -> Tuple[float, float, float]:
+    fold_rate = _opponent_fold_rate(player.street, None)
+    if fold_rate >= 0.45:
+        return 0.0, -0.02, -0.005
+    if fold_rate <= 0.2:
+        return 0.0, 0.02, 0.01
+    return 0.0, 0.0, 0.0
+
+
 def _opponent_discard_bias(street: int) -> float:
     if street < 4:
         return 0.0
@@ -522,14 +768,16 @@ def _raise_size(pot_total: int, min_raise: int, max_raise: int, equity: float, b
     if max_raise <= 0:
         return 0
     if bluff:
-        target = max(min_raise, pot_total // 3)
+        target = int(pot_total * _BLUFF_RAISE_FRACTION)
+        target = max(min_raise, target)
         return min(target, max_raise)
+    strong_frac, medium_frac, light_frac = _RAISE_SIZE_FRACTIONS
     if equity >= 0.7:
-        target = pot_total
+        target = int(pot_total * strong_frac)
     elif equity >= 0.6:
-        target = pot_total // 2
+        target = int(pot_total * medium_frac)
     else:
-        target = pot_total // 3
+        target = int(pot_total * light_frac)
     target = max(min_raise, target)
     return min(target, max_raise)
 
