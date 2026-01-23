@@ -221,6 +221,18 @@ def _load_param_file() -> Mapping[str, Tuple[float, ...]]:
         "bluff_disable_behind",
         ("bluff_disable_behind",),
     )
+    _maybe_group(
+        "pressure_equity_threshold",
+        ("pressure_equity_threshold",),
+    )
+    _maybe_group(
+        "pressure_raise_bonus",
+        ("pressure_raise_bonus",),
+    )
+    _maybe_group(
+        "pressure_foldrate_min",
+        ("pressure_foldrate_min",),
+    )
     return grouped
 
 
@@ -390,6 +402,27 @@ _BLUFF_DISABLE_BEHIND = _load_float_list(
     1,
     (200.0,),
     param_key="bluff_disable_behind",
+    param_values=_PARAM_VALUES,
+)[0]
+_PRESSURE_EQUITY_THRESHOLD = _load_float_list(
+    "NEUROPOKER_PRESSURE_EQUITY_THRESHOLD",
+    1,
+    (0.62,),
+    param_key="pressure_equity_threshold",
+    param_values=_PARAM_VALUES,
+)[0]
+_PRESSURE_RAISE_BONUS = _load_float_list(
+    "NEUROPOKER_PRESSURE_RAISE_BONUS",
+    1,
+    (0.05,),
+    param_key="pressure_raise_bonus",
+    param_values=_PARAM_VALUES,
+)[0]
+_PRESSURE_FOLDRATE_MIN = _load_float_list(
+    "NEUROPOKER_PRESSURE_FOLDRATE_MIN",
+    1,
+    (0.12,),
+    param_key="pressure_foldrate_min",
     param_values=_PARAM_VALUES,
 )[0]
 
@@ -738,7 +771,10 @@ def play(bot):
             bot.hero.policy_round = getattr(bot, "round_num", 0)
             bot.hero.discard_bluff = False
     if policy_class:
-        return policy_class.play(bot)
+        action = policy_class.play(bot)
+        if _discard_action_required(bot):
+            action = _force_discard_if_needed(bot, action)
+        return action
     from skeleton.actions import CheckAction, CallAction, FoldAction
     legal_actions = set(bot.hero.legal_actions)
     if FoldAction in legal_actions and bot.hero.continue_cost > 0:
@@ -750,6 +786,41 @@ def play(bot):
     if CheckAction in legal_actions:
         return CheckAction()
     return FoldAction()
+
+
+def _force_discard_if_needed(player: PlayerView, action):
+    try:
+        from skeleton.actions import DiscardAction
+    except Exception:
+        return action
+    if isinstance(action, DiscardAction):
+        return action
+    legal_actions = set(player.hero.legal_actions)
+    if DiscardAction not in legal_actions:
+        return action
+    hero_hand = list(player.hero.hand)
+    board_cards = list(player.community)
+    opponent_discard = None
+    if not player.hero.blind and len(board_cards) >= 3:
+        opponent_discard = board_cards[-1]
+    discard_samples, discard_seconds = _discard_budget(player)
+    equities = stats.discard_equity(
+        hero_hand,
+        board_cards,
+        n_samples=discard_samples,
+        max_seconds=discard_seconds,
+    )
+    best_i = _select_discard_asymmetric(
+        hero_hand,
+        equities,
+        discard_visible=player.hero.blind,
+        opponent_discard=opponent_discard,
+        board_cards=board_cards,
+    )
+    player.hero.last_discard = hero_hand[best_i]
+    player.hero.last_discard_visible = player.hero.blind
+    player.hero.discard_bluff = False
+    return DiscardAction(best_i)
 
 
 def _maybe_set_policy(player: PlayerView):
@@ -815,6 +886,15 @@ def _should_discard_bluff(player: PlayerView) -> bool:
     if _DISCARD_BLUFF_RATE <= 0.0:
         return False
     return random.random() < _DISCARD_BLUFF_RATE
+
+
+def _should_pressure(player: PlayerView, equity: float) -> bool:
+    if equity < _PRESSURE_EQUITY_THRESHOLD:
+        return False
+    fold_rate = _opponent_fold_rate(player.street, None)
+    if fold_rate <= 0.0:
+        return True
+    return fold_rate >= _PRESSURE_FOLDRATE_MIN
 
 
 def _discard_bluff_index(hero_hand: Sequence[str]) -> int:
