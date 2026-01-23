@@ -80,8 +80,8 @@ def main():
 
     summaries = []
     failures = []
-    run_match_script = os.path.join(os.path.dirname(__file__), "run_match.py")
-    parse_script = os.path.join(os.path.dirname(__file__), "parse_gamelog.py")
+    run_match_script = os.path.abspath(os.path.join(os.path.dirname(__file__), "run_match.py"))
+    parse_script = os.path.abspath(os.path.join(os.path.dirname(__file__), "parse_gamelog.py"))
 
     for i in range(args.matches):
         seed = args.seed_start + i
