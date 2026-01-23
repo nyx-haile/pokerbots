@@ -71,6 +71,7 @@ def main():
     parser.add_argument("--output-dir", default="runs", help="Output directory")
     parser.add_argument("--match-timeout", type=int, default=900, help="Timeout per match in seconds")
     parser.add_argument("--engine-python", default=None, help="Python executable for the engine")
+    parser.add_argument("--bot-python", default=None, help="Python executable for bot commands")
     args = parser.parse_args()
 
     args.engine_dir = os.path.abspath(args.engine_dir)
@@ -97,6 +98,7 @@ def main():
             run_match_script,
             "--engine-dir", args.engine_dir,
             "--engine-python", args.engine_python or "",
+            "--bot-python", args.bot_python or "",
             "--bot-a", args.bot_a,
             "--bot-b", args.bot_b,
             "--rounds", str(args.rounds),
@@ -105,6 +107,9 @@ def main():
         ]
         if not args.engine_python:
             cmd.remove("--engine-python")
+            cmd.remove("")
+        if not args.bot_python:
+            cmd.remove("--bot-python")
             cmd.remove("")
         code, output, timed_out = _run_match(cmd, cwd=suite_dir, timeout=args.match_timeout)
         with open(os.path.join(match_dir, "run_match_stdout.txt"), "w") as handle:
@@ -149,6 +154,7 @@ def main():
                 run_match_script,
                 "--engine-dir", args.engine_dir,
                 "--engine-python", args.engine_python or "",
+                "--bot-python", args.bot_python or "",
                 "--bot-a", args.bot_b,
                 "--bot-b", args.bot_a,
                 "--rounds", str(args.rounds),
@@ -157,6 +163,9 @@ def main():
             ]
             if not args.engine_python:
                 swap_cmd.remove("--engine-python")
+                swap_cmd.remove("")
+            if not args.bot_python:
+                swap_cmd.remove("--bot-python")
                 swap_cmd.remove("")
             swap_code, swap_out, swap_timed_out = _run_match(swap_cmd, cwd=suite_dir, timeout=args.match_timeout)
             with open(os.path.join(swap_dir, "run_match_stdout.txt"), "w") as handle:

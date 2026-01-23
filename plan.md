@@ -76,6 +76,45 @@
    - Record results, selected default, and flags in `documentation/notes.md`.
    - Note any tuning parameters and their rationale.
 
+## New Strategy Enhancements
+- Exploit reraises as information: add learning that conditions opponent range and action likelihoods on reraises, tracking reraise frequency and sizing to tighten post-raise call/raise decisions.
+
+## Turn + Betting Logic Review (Scrim Analysis)
+### Decision Flow (current)
+- `strategy.play`: computes equity (quick + full MC), pot odds, raise/call margins, board texture, and opponent bias; then chooses raise/call/fold.
+- `pot_odds_to_call`: uses `continue_cost / (pot_total + continue_cost)`.
+- `_equity_budget`: turn uses higher MC samples (100) but still noisy for 6-board.
+- `_raise_margin_by_street` / `_call_margin_by_street`: same logic for all post-flop streets; turn defaults to raise=0.18, call=0.05.
+- `_raise_size` + `_adjust_value_raise`: pot-fraction sizing with small fold-rate adjustments.
+- `fold_equity_estimate`: learned from showdown/fold outcomes; does not explicitly model raise frequency.
+- `_raise_call_penalty`: triggered by large raise size ratio; currently adds to call margin.
+
+### Observed Scrim Pattern
+- Large EV swings on turn (losses in game_log2/4/5), even when flop EV is positive.
+- Bot frequently bets and then calls raises; log analysis shows near-zero fold rate after facing a raise.
+- Turn decisions often occur with large pots and shallow stacks, so small equity errors produce big EV swings.
+
+### Likely Causes
+- **Call-margin semantics are loose:** `equity < pot_odds - call_margin` means *higher* `call_margin` makes calls *easier*. A penalty that increases `call_margin` actually loosens calls vs big raises.
+- **Raise-call logic ignores action history:** no explicit penalty for “bet → face raise” or “reraise” states; decisions rely only on pot odds + margin.
+- **Turn equity noise:** even 100 MC samples can be noisy; turn bets are high-leverage because stacks are often shallow.
+- **Raise frequency not modeled:** opponent raise rates only slightly bias margins (±0.01/0.02), insufficient when raise size is large.
+
+### Action Items (follow-up)
+- Add turn-specific call-tightening: reduce `call_margin` or add a positive delta to pot-odds for turn raises (especially after betting into a raise).
+- Rework raise-call penalty to *tighten* calling (subtract from `call_margin`, or add to pot-odds threshold).
+- Introduce a turn “raise-response” parameter keyed by raise size ratio (e.g., fold unless equity > pot_odds + extra).
+- Optionally raise MC samples on turn *only when facing a raise* to reduce variance, while keeping other spots fast.
+
+### Implemented Mitigation (2026-01-23)
+- Turn raise-call tightening: apply `_RAISE_CALL_PENALTY` only on turn (street 5) when we are facing a raise after our own bet on the same street.
+- Implementation detail: penalty is applied by **reducing** `call_margin` (tightening the call threshold), and only when `continue_cost / pot_total >= _RAISE_CALL_RATIO`.
+- Goal: cut the “bet → face raise → call” frequency that drives turn EV swings.
+- Added a turn raise-response threshold (`_TURN_RAISE_RATIO` + `_TURN_RAISE_EXTRA`) that further tightens calls when a large raise hits on the turn after our bet.
+- Added turn raise MC upshift (`_TURN_RAISE_SAMPLE_MULT`, `_TURN_RAISE_TIME_MULT`) to re-estimate equity with more samples/time when facing a large turn raise after our bet.
+  - Applied only when `continue_cost / pot_total >= _TURN_RAISE_RATIO`.
+  - Samples capped at 200, time capped at 0.05s to avoid timeouts.
+
 ## Phase 0: Self-play regression harness (Priority 0)
 - Build an engine-driven match runner that spawns two bots as separate processes (DONE).
 - Add deterministic seed control for reproducible runs; log the seed per match (DONE).

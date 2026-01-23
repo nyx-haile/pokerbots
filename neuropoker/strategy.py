@@ -151,6 +151,22 @@ def _load_param_file() -> Mapping[str, Tuple[float, ...]]:
         "raise_call_penalty",
         ("raise_call_penalty",),
     )
+    _maybe_group(
+        "turn_raise_ratio",
+        ("turn_raise_ratio",),
+    )
+    _maybe_group(
+        "turn_raise_extra",
+        ("turn_raise_extra",),
+    )
+    _maybe_group(
+        "turn_raise_sample_mult",
+        ("turn_raise_sample_mult",),
+    )
+    _maybe_group(
+        "turn_raise_time_mult",
+        ("turn_raise_time_mult",),
+    )
     return grouped
 
 
@@ -208,6 +224,34 @@ _RAISE_CALL_PENALTY = _load_float_list(
     1,
     (0.08,),
     param_key="raise_call_penalty",
+    param_values=_PARAM_VALUES,
+)[0]
+_TURN_RAISE_RATIO = _load_float_list(
+    "NEUROPOKER_TURN_RAISE_RATIO",
+    1,
+    (0.5,),
+    param_key="turn_raise_ratio",
+    param_values=_PARAM_VALUES,
+)[0]
+_TURN_RAISE_EXTRA = _load_float_list(
+    "NEUROPOKER_TURN_RAISE_EXTRA",
+    1,
+    (0.06,),
+    param_key="turn_raise_extra",
+    param_values=_PARAM_VALUES,
+)[0]
+_TURN_RAISE_SAMPLE_MULT = _load_float_list(
+    "NEUROPOKER_TURN_RAISE_SAMPLE_MULT",
+    1,
+    (2.0,),
+    param_key="turn_raise_sample_mult",
+    param_values=_PARAM_VALUES,
+)[0]
+_TURN_RAISE_TIME_MULT = _load_float_list(
+    "NEUROPOKER_TURN_RAISE_TIME_MULT",
+    1,
+    (1.5,),
+    param_key="turn_raise_time_mult",
     param_values=_PARAM_VALUES,
 )[0]
 
@@ -468,6 +512,13 @@ def _fallback_action(player: PlayerView):
         equity = stats.preflop_strength(hero_hand)
     else:
         samples, max_seconds, discard_samples = _equity_budget(player)
+        samples, max_seconds, discard_samples = _adjust_budget_for_turn_raise(
+            player,
+            pot_total,
+            samples,
+            max_seconds,
+            discard_samples,
+        )
         quick_equity = stats.estimate_equity(
             hero_hand,
             board_cards,
@@ -505,8 +556,11 @@ def _fallback_action(player: PlayerView):
         call_margin -= policy_bias
     raise_margin += texture_raise
     call_margin += texture_call
-    raise_call_penalty = _raise_call_penalty(player.hero.continue_cost, pot_total)
-    call_margin += raise_call_penalty
+    raise_call_penalty = _raise_call_penalty(player, pot_total)
+    call_margin -= raise_call_penalty
+    turn_raise_extra = _turn_raise_extra(player, pot_total)
+    if turn_raise_extra > 0:
+        call_margin -= turn_raise_extra
 
     if player.street <= 0 and not _DISABLE_PREFLOP_MIX:
         min_raise, max_raise = getattr(player.hero, "raise_bounds", (0, 0))
@@ -590,13 +644,34 @@ def _call_margin_by_street(street: int) -> float:
     return _CALL_MARGIN_BY_STREET[3]
 
 
-def _raise_call_penalty(continue_cost: int, pot_total: int) -> float:
+def _raise_call_penalty(player: PlayerView, pot_total: int) -> float:
+    if player.street != 5:
+        return 0.0
+    continue_cost = player.hero.continue_cost
     if continue_cost <= 0:
         return 0.0
+    last_bet_street = getattr(player, "_last_bet_street", None)
+    if last_bet_street != player.street:
+        return 0.0
     ratio = continue_cost / float(max(1, pot_total))
-    if ratio >= _RAISE_CALL_RATIO:
-        return _RAISE_CALL_PENALTY
-    return 0.0
+    if ratio < _RAISE_CALL_RATIO:
+        return 0.0
+    return _RAISE_CALL_PENALTY
+
+
+def _turn_raise_extra(player: PlayerView, pot_total: int) -> float:
+    if player.street != 5:
+        return 0.0
+    continue_cost = player.hero.continue_cost
+    if continue_cost <= 0:
+        return 0.0
+    last_bet_street = getattr(player, "_last_bet_street", None)
+    if last_bet_street != player.street:
+        return 0.0
+    ratio = continue_cost / float(max(1, pot_total))
+    if ratio < _TURN_RAISE_RATIO:
+        return 0.0
+    return _TURN_RAISE_EXTRA
 
 
 def _preflop_open_decision(
@@ -981,6 +1056,36 @@ def _equity_budget(player: PlayerView) -> Tuple[int, float, int]:
         samples = max(20, samples // 2)
         max_seconds = max(0.005, max_seconds * 0.5)
         discard_samples = max(4, discard_samples // 2)
+    return samples, max_seconds, discard_samples
+
+
+def _turn_raise_ratio(player: PlayerView, pot_total: int) -> Optional[float]:
+    if player.street != 5:
+        return None
+    continue_cost = player.hero.continue_cost
+    if continue_cost <= 0:
+        return None
+    last_bet_street = getattr(player, "_last_bet_street", None)
+    if last_bet_street != player.street:
+        return None
+    return continue_cost / float(max(1, pot_total))
+
+
+def _adjust_budget_for_turn_raise(
+    player: PlayerView,
+    pot_total: int,
+    samples: int,
+    max_seconds: float,
+    discard_samples: int,
+) -> Tuple[int, float, int]:
+    ratio = _turn_raise_ratio(player, pot_total)
+    if ratio is None or ratio < _TURN_RAISE_RATIO:
+        return samples, max_seconds, discard_samples
+    sample_mult = max(1.0, _TURN_RAISE_SAMPLE_MULT)
+    time_mult = max(1.0, _TURN_RAISE_TIME_MULT)
+    samples = min(200, int(samples * sample_mult))
+    max_seconds = min(0.05, max_seconds * time_mult)
+    discard_samples = min(30, max(4, int(discard_samples * 1.2)))
     return samples, max_seconds, discard_samples
 
 

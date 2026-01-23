@@ -92,6 +92,7 @@ def run() -> int:
     parser.add_argument("--output-dir", default="runs", help="Directory to write run outputs")
     parser.add_argument("--seed", type=int, default=None, help="Deterministic seed for the engine RNG")
     parser.add_argument("--engine-python", default=None, help="Python executable for the engine")
+    parser.add_argument("--bot-python", default=None, help="Python executable for bot commands")
     parser.add_argument("--enforce-clock", action="store_true", help="Enable game clock")
     parser.add_argument("--no-enforce-clock", dest="enforce_clock", action="store_false")
     parser.set_defaults(enforce_clock=True)
@@ -121,6 +122,10 @@ def run() -> int:
     stdout_path = os.path.join(run_dir, "engine_stdout.txt")
     env = os.environ.copy()
     engine_python = args.engine_python or env.get("POKERBOTS_ENGINE_PYTHON") or sys.executable
+    bot_python = args.bot_python or env.get("POKERBOTS_BOT_PYTHON")
+    if bot_python:
+        bot_bin = os.path.dirname(os.path.abspath(bot_python))
+        env["PATH"] = bot_bin + os.pathsep + env.get("PATH", "")
     if args.seed is not None:
         env["POKERBOTS_SEED"] = str(args.seed)
     with open(stdout_path, "w") as stdout_handle:
