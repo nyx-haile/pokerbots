@@ -264,15 +264,19 @@ class Player(Bot):
             except Exception:
                 self._pending_hero_discard = None
         if self.street <= 0:
+            bucket = getattr(self.hero, "preflop_bucket", "n/a")
+            roll = getattr(self.hero, "preflop_roll", None)
             self._log(
                 "preflop decision action={0} equity={1:.3f} pot_odds={2:.3f} "
-                "continue_cost={3} pot_total={4} legal={5}".format(
+                "continue_cost={3} pot_total={4} legal={5} bucket={6} roll={7}".format(
                     getattr(action, "__class__", type(action)).__name__,
                     stats.preflop_strength(self.hero.hand),
                     strategy.pot_odds_to_call(self.hero.continue_cost, max(1, self.hero.pot_total)),
                     self.hero.continue_cost,
                     self.hero.pot_total,
                     self.hero.legal_actions,
+                    bucket,
+                    "-" if roll is None else "{0:.3f}".format(roll),
                 )
             )
         if isinstance(action, RaiseAction):

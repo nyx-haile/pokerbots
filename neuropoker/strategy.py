@@ -25,6 +25,7 @@ _OPPONENT_RANGE_MODEL = {
     "showdowns": {"wins": 0.0, "losses": 0.0},
 }
 _USE_RANDOM_POLICY = os.environ.get("NEUROPOKER_USE_RANDOM_POLICY", "0") == "1"
+_DISABLE_PREFLOP_MIX = os.environ.get("NEUROPOKER_DISABLE_PREFLOP_MIX", "0") == "1"
 _RANDOM_POLICY_LR = 0.02
 _RANDOM_POLICY_HIDDEN = 16
 _LAST_HIDDEN = None
@@ -313,9 +314,10 @@ def _fallback_action(player: PlayerView):
     raise_margin += texture_raise
     call_margin += texture_call
 
-    if player.street <= 0:
+    if player.street <= 0 and not _DISABLE_PREFLOP_MIX:
         min_raise, max_raise = getattr(player.hero, "raise_bounds", (0, 0))
         action = _preflop_open_decision(
+            player,
             equity,
             pot_odds,
             legal_actions,
@@ -393,6 +395,7 @@ def _call_margin_by_street(street: int) -> float:
 
 
 def _preflop_open_decision(
+    player: PlayerView,
     equity: float,
     pot_odds: float,
     legal_actions: Sequence[object],
@@ -400,18 +403,24 @@ def _preflop_open_decision(
     max_raise: int,
     pot_total: int,
 ):
+    roll = _preflop_roll(player)
     if RaiseAction in legal_actions:
         if equity >= 0.7:
             raise_prob = 0.7
+            bucket = "raise_strong"
         elif equity >= 0.62:
             raise_prob = 0.45
+            bucket = "raise_medium"
         elif equity >= 0.56:
             raise_prob = 0.25
+            bucket = "raise_light"
         else:
             raise_prob = 0.0
+            bucket = "raise_none"
         if equity < pot_odds:
             raise_prob *= 0.5
-        if raise_prob > 0 and random.random() < raise_prob:
+        if raise_prob > 0 and roll < raise_prob:
+            _set_preflop_debug(player, bucket, roll)
             target = _raise_size(pot_total, min_raise, max_raise, equity)
             if target > 0:
                 return RaiseAction(target)
@@ -419,17 +428,35 @@ def _preflop_open_decision(
     if CallAction in legal_actions:
         if equity >= 0.52:
             call_prob = 0.75
+            bucket = "call_strong"
         elif equity >= 0.47:
             call_prob = 0.5
+            bucket = "call_medium"
         elif equity >= 0.42:
             call_prob = 0.25
+            bucket = "call_light"
         else:
             call_prob = 0.0
+            bucket = "call_none"
         if equity < pot_odds - 0.05:
             call_prob *= 0.5
-        if call_prob > 0 and random.random() < call_prob:
+        if call_prob > 0 and roll < call_prob:
+            _set_preflop_debug(player, bucket, roll)
             return CallAction()
+    _set_preflop_debug(player, "fold_default", roll)
     return None
+
+
+def _preflop_roll(player: PlayerView) -> float:
+    round_num = getattr(player, "round_num", 0)
+    hand = getattr(player.hero, "hand", [])
+    seed = hash((round_num, tuple(hand), "preflop")) & 0xFFFFFFFF
+    return random.Random(seed).random()
+
+
+def _set_preflop_debug(player: PlayerView, bucket: str, roll: float) -> None:
+    setattr(player.hero, "preflop_bucket", bucket)
+    setattr(player.hero, "preflop_roll", roll)
 
 
 def _board_texture_adjustments(board_cards: Sequence[str]) -> Tuple[float, float, float]:
