@@ -313,6 +313,12 @@ def _fallback_action(player: PlayerView):
     raise_margin += texture_raise
     call_margin += texture_call
 
+    preflop_raise_threshold = None
+    preflop_call_threshold = None
+    if player.street <= 0:
+        preflop_raise_threshold = max(pot_odds + 0.05, 0.55)
+        preflop_call_threshold = max(pot_odds - 0.02, 0.45)
+
     if player.street > 0:
         raise_threshold = pot_odds + raise_margin
         if quick_equity > raise_threshold + 0.12:
@@ -331,6 +337,8 @@ def _fallback_action(player: PlayerView):
     if RaiseAction in legal_actions:
         min_raise, max_raise = getattr(player.hero, "raise_bounds", (0, 0))
         raise_threshold = pot_odds + raise_margin
+        if preflop_raise_threshold is not None:
+            raise_threshold = max(raise_threshold, preflop_raise_threshold)
         raise_cap = max(4, int(pot_total // 2 * raise_cap_mult))
         fold_rate = fold_equity_estimate(None, min_raise, player.street, pot_total)
         if min_raise > raise_cap or min_raise > player.hero.stack // 2:
@@ -347,6 +355,9 @@ def _fallback_action(player: PlayerView):
                 if target > 0:
                     return RaiseAction(target)
 
+    if preflop_call_threshold is not None and CallAction in legal_actions:
+        if equity >= preflop_call_threshold:
+            return CallAction()
     if equity < pot_odds - call_margin and FoldAction in legal_actions:
         return FoldAction()
 
