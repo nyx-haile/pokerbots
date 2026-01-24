@@ -6,7 +6,7 @@ import random
 from typing import Any, Iterable, Mapping, Optional, Sequence, Tuple, Dict, List
 
 import stats
-from skeleton.states import BIG_BLIND, NUM_ROUNDS, SMALL_BLIND
+from skeleton.states import BIG_BLIND, NUM_ROUNDS, SMALL_BLIND, STARTING_STACK
 
 _INFO_PENALTY = 0.05
 _INFO_PENALTY_MIN = 0.0
@@ -867,6 +867,88 @@ def _avoid_lock_win_fold(player: PlayerView, action):
     if CheckAction in legal_actions:
         return CheckAction()
     return action
+
+
+def _blind_loss_for_rounds(rounds_left: int, starts_as_bb: bool) -> int:
+    """
+    Calculate total blind losses over rounds_left rounds.
+    Closed-form: pairs * 3 + remainder (2 if BB, 1 if SB).
+    """
+    if rounds_left <= 0:
+        return 0
+    pairs = rounds_left // 2
+    remainder = rounds_left % 2
+    total = pairs * 3  # Each pair: BB(2) + SB(1) = 3
+    if remainder:
+        total += BIG_BLIND if starts_as_bb else SMALL_BLIND
+    return total
+
+
+def _max_safe_loss_this_round(player: PlayerView) -> int:
+    """
+    Calculate the maximum chips we can lose this round without letting
+    opponent lock the win. Considers both ahead and behind scenarios.
+    """
+    if not _ENABLE_LOCK_WIN:
+        return STARTING_STACK
+    
+    round_num = getattr(player, "round_num", 0)
+    if round_num <= 0:
+        return STARTING_STACK
+    
+    rounds_left = max(0, NUM_ROUNDS - round_num)  # rounds AFTER current
+    hero_bankroll = getattr(player.hero, "bankroll", 0)
+    
+    # Opponent's blind status next round is opposite of ours now
+    opp_starts_as_bb = not getattr(player.hero, "blind", False)
+    opp_future_loss = _blind_loss_for_rounds(rounds_left, opp_starts_as_bb)
+    
+    # If we lose L chips this round:
+    # - Opponent's new bankroll: -hero_bankroll + L
+    # - Opponent can lock if: -hero_bankroll + L > opp_future_loss
+    # - Safe if: L <= opp_future_loss + hero_bankroll
+    
+    max_safe = opp_future_loss + hero_bankroll
+    return max(0, max_safe)
+
+
+def _lock_defense_raise_margin(player: PlayerView) -> float:
+    """
+    Return an additional raise margin (making raises harder) when
+    we're close to the danger zone. Returns 0.0 when very safe.
+    """
+    if not _ENABLE_LOCK_WIN:
+        return 0.0
+    
+    max_safe = _max_safe_loss_this_round(player)
+    
+    if max_safe >= STARTING_STACK:
+        return 0.0  # Very safe, no penalty
+    if max_safe <= 0:
+        return 0.5  # Extreme danger, large penalty
+    
+    # Linear penalty: 0.0 at max_safe=400, 0.3 at max_safe=0
+    penalty = 0.3 * (1.0 - max_safe / STARTING_STACK)
+    return max(0.0, min(0.3, penalty))
+
+
+def _cap_raise_for_lock_defense(player: PlayerView, raise_amount: int) -> int:
+    """
+    Cap a raise amount to prevent giving opponent a win-lock.
+    Returns 0 if no raise is safe.
+    """
+    if not _ENABLE_LOCK_WIN:
+        return raise_amount
+    
+    max_safe = _max_safe_loss_this_round(player)
+    if raise_amount <= max_safe:
+        return raise_amount
+    
+    # Cap to max_safe, but respect minimum raise
+    min_raise, _ = getattr(player.hero, "raise_bounds", (0, 0))
+    if max_safe < min_raise:
+        return 0  # Can't raise safely - signal "don't raise"
+    return max_safe
 
 
 def play(bot):
