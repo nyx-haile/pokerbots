@@ -891,23 +891,23 @@ def _max_safe_loss_this_round(player: PlayerView) -> int:
     """
     if not _ENABLE_LOCK_WIN:
         return STARTING_STACK
-    
+
     round_num = getattr(player, "round_num", 0)
     if round_num <= 0:
         return STARTING_STACK
-    
+
     rounds_left = max(0, NUM_ROUNDS - round_num)  # rounds AFTER current
     hero_bankroll = getattr(player.hero, "bankroll", 0)
-    
+
     # Opponent's blind status next round is opposite of ours now
     opp_starts_as_bb = not getattr(player.hero, "blind", False)
     opp_future_loss = _blind_loss_for_rounds(rounds_left, opp_starts_as_bb)
-    
+
     # If we lose L chips this round:
     # - Opponent's new bankroll: -hero_bankroll + L
     # - Opponent can lock if: -hero_bankroll + L > opp_future_loss
     # - Safe if: L <= opp_future_loss + hero_bankroll
-    
+
     max_safe = opp_future_loss + hero_bankroll
     return max(0, max_safe)
 
@@ -919,14 +919,14 @@ def _lock_defense_raise_margin(player: PlayerView) -> float:
     """
     if not _ENABLE_LOCK_WIN:
         return 0.0
-    
+
     max_safe = _max_safe_loss_this_round(player)
-    
+
     if max_safe >= STARTING_STACK:
         return 0.0  # Very safe, no penalty
     if max_safe <= 0:
         return 0.5  # Extreme danger, large penalty
-    
+
     # Linear penalty: 0.0 at max_safe=400, 0.3 at max_safe=0
     penalty = 0.3 * (1.0 - max_safe / STARTING_STACK)
     return max(0.0, min(0.3, penalty))
@@ -939,11 +939,11 @@ def _cap_raise_for_lock_defense(player: PlayerView, raise_amount: int) -> int:
     """
     if not _ENABLE_LOCK_WIN:
         return raise_amount
-    
+
     max_safe = _max_safe_loss_this_round(player)
     if raise_amount <= max_safe:
         return raise_amount
-    
+
     # Cap to max_safe, but respect minimum raise
     min_raise, _ = getattr(player.hero, "raise_bounds", (0, 0))
     if max_safe < min_raise:
@@ -964,13 +964,13 @@ def _is_desperate(player: PlayerView) -> bool:
     hero_bankroll = getattr(player.hero, "bankroll", 0)
     if hero_bankroll >= 0:
         return False  # We're ahead or even, not desperate
-    
+
     # Check if opponent can lock by folding all remaining hands
     rounds_left = max(0, NUM_ROUNDS - round_num)
     opp_starts_bb = not getattr(player.hero, "blind", False)
     opp_future_loss = _blind_loss_for_rounds(rounds_left, opp_starts_bb)
     opponent_bankroll = -hero_bankroll
-    
+
     # Opponent can lock if their bankroll > their future blind losses
     return opponent_bankroll > opp_future_loss
 
@@ -985,13 +985,15 @@ def play(bot):
     # Win-lock: if we can lock the win, do it
     if _should_lock_win(bot):
         from strategies.lockwin import LockWinPolicy
+        print("locking win")
         return LockWinPolicy.play(bot)
-    
+
     # Desperate mode: if opponent can lock, play aggressively
     if _is_desperate(bot):
         from strategies.lockwin import DesperatePolicy
+        print("LAST RESORT. Might be my last rodeo...")
         return DesperatePolicy.play(bot)
-    
+
     policy_class = _select_round_policy(bot)
     if not policy_class and bot.street <= 0:
         policy_class = _maybe_set_policy(bot)
