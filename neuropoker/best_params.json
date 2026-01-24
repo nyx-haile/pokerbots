@@ -38,7 +38,7 @@
     "raise_size_medium": 0.969216826831996,
     "raise_size_strong": 1.0227084767929642,
     "raise_strong": 0.812268219814574,
-    "tight_equity_threshold": 0.5096064413063619,
+    "tight_equity_threshold": 0.35,
     "turn_raise_extra": 0.1987551924245857,
     "turn_raise_ratio": 0.8032139347440768,
     "turn_raise_sample_mult": 1.7320057093308683,

@@ -760,7 +760,14 @@ def _tight_equity_threshold(player: PlayerView) -> float:
 
 def _choose_policy_for_round(player: PlayerView, equity: float):
     bluff_cls, tight_cls = _policy_classes()
+    # Always use TightPolicy for hands with equity >= threshold
     if equity >= _tight_equity_threshold(player):
+        return tight_cls
+    # Also use TightPolicy for any +EV hand (equity >= pot_odds)
+    pot_total = max(1, getattr(player.hero, "pot_total", 1))
+    continue_cost = getattr(player.hero, "continue_cost", 0)
+    pot_odds = pot_odds_to_call(continue_cost, pot_total)
+    if equity >= pot_odds:
         return tight_cls
     weakness = _opponent_weakness_score(player)
     if weakness >= _bluff_threshold(player) and _bluff_allowed(player):
@@ -886,11 +893,27 @@ def play(bot):
         if _discard_action_required(bot):
             action = _force_discard_if_needed(bot, action)
         return _avoid_lock_win_fold(bot, action)
+    # Fallback: use pot-odds-aware logic instead of blind folding
     from skeleton.actions import CheckAction, CallAction, FoldAction
     legal_actions = set(bot.hero.legal_actions)
-    if FoldAction in legal_actions and bot.hero.continue_cost > 0:
-        return _avoid_lock_win_fold(bot, FoldAction())
-    if CheckAction in legal_actions and bot.hero.continue_cost == 0:
+    # Calculate pot odds for the fallback decision
+    pot_total = max(1, getattr(bot.hero, "pot_total", 1))
+    continue_cost = getattr(bot.hero, "continue_cost", 0)
+    pot_odds = pot_odds_to_call(continue_cost, pot_total)
+    # Estimate equity for fallback
+    hero_hand = list(getattr(bot.hero, "hand", []))
+    if bot.street <= 0 and hero_hand:
+        equity = stats.preflop_strength(hero_hand)
+    else:
+        equity = 0.3  # Conservative default for post-flop without policy
+    # Only fold if equity is clearly below pot odds
+    if FoldAction in legal_actions and continue_cost > 0:
+        if equity < pot_odds - 0.05:
+            return _avoid_lock_win_fold(bot, FoldAction())
+        # Otherwise call if we have reasonable equity
+        if CallAction in legal_actions:
+            return CallAction()
+    if CheckAction in legal_actions and continue_cost == 0:
         return CheckAction()
     if CallAction in legal_actions:
         return CallAction()
@@ -1133,11 +1156,13 @@ def _preflop_open_decision(
         _set_preflop_debug(player, "check_default", roll)
         return CheckAction()
     if CallAction in legal_actions:
-        _set_preflop_debug(player, "call_default", roll)
-        return CallAction()
+        # Do not default call; fall through to odds-based logic in TightPolicy
+        # _set_preflop_debug(player, "call_default", roll)
+        return None
     if FoldAction in legal_actions:
-        _set_preflop_debug(player, "fold_default", roll)
-        return FoldAction()
+        # Do not default fold; fall through to odds-based logic
+        # _set_preflop_debug(player, "fold_default", roll)
+        return None
     _set_preflop_debug(player, "no_action", roll)
     return None
 
@@ -1520,25 +1545,25 @@ def _equity_budget(player: PlayerView) -> Tuple[int, float, int]:
     street = player.street
     if street <= 0:
         samples = 60
-        max_seconds = 0.018
+        max_seconds = 0.012
         discard_samples = 8
     elif street <= 3:
-        samples = 70
-        max_seconds = 0.02
+        samples = 80
+        max_seconds = 0.015
         discard_samples = 10
     else:
-        samples = 100
-        max_seconds = 0.025
-        discard_samples = 10
+        samples = 120
+        max_seconds = 0.020
+        discard_samples = 12
 
     game_clock = getattr(player, "game_clock", None)
     if game_clock is not None and game_clock < 20:
-        samples = max(30, samples // 2)
-        max_seconds = max(0.01, max_seconds * 0.5)
-        discard_samples = max(5, discard_samples // 2)
+        samples = max(40, samples // 2)
+        max_seconds = max(0.008, max_seconds * 0.5)
+        discard_samples = max(6, discard_samples // 2)
     if game_clock is not None and game_clock < 10:
         samples = max(20, samples // 2)
-        max_seconds = max(0.005, max_seconds * 0.5)
+        max_seconds = max(0.004, max_seconds * 0.5)
         discard_samples = max(4, discard_samples // 2)
     return samples, max_seconds, discard_samples
 
@@ -1576,16 +1601,16 @@ def _adjust_budget_for_turn_raise(
 def _discard_budget(player: PlayerView) -> Tuple[int, float]:
     street = player.street
     if street <= 2:
-        samples = 40
-        max_seconds = 0.0
-    else:
         samples = 60
-        max_seconds = 0.0
+        max_seconds = 0.015
+    else:
+        samples = 80
+        max_seconds = 0.015
     game_clock = getattr(player, "game_clock", None)
     if game_clock is not None and game_clock < 20:
         samples = max(30, samples // 2)
     if game_clock is not None and game_clock < 10:
-        samples = max(20, samples // 2)
+        samples = max(15, samples // 2)
     return samples, max_seconds
 
 

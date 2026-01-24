@@ -79,7 +79,6 @@ def main():
     parser.add_argument("--rounds", type=int, default=1000, help="Rounds per match")
     parser.add_argument("--matches", type=int, default=2, help="Number of seeds to run")
     parser.add_argument("--seat-swaps", action="store_true", help="Run a second match swapping seats")
-    parser.add_argument("--seed-start", type=int, default=1, help="Starting seed")
     parser.add_argument("--output-dir", default="runs", help="Output directory")
     parser.add_argument("--match-timeout", type=int, default=900, help="Timeout per match in seconds")
     parser.add_argument("--engine-python", default=None, help="Python executable for the engine")
@@ -115,13 +114,12 @@ def main():
     parse_script = os.path.abspath(os.path.join(os.path.dirname(__file__), "parse_gamelog.py"))
 
     for i in range(args.matches):
-        seed = args.seed_start + i
         match_dir = os.path.join(suite_dir, "match_%03d" % (i + 1))
         os.makedirs(match_dir)
         bot_b_path = args.bot_b
         if args.bot_b_pool:
             if args.bot_b_pool_mode == "random":
-                rng = random.Random(args.seed_start + i)
+                rng = random.Random()
                 bot_b_path = rng.choice(args.bot_b_pool)
             else:
                 bot_b_path = args.bot_b_pool[i % len(args.bot_b_pool)]
@@ -137,7 +135,6 @@ def main():
             "--bot-a", args.bot_a,
             "--bot-b", bot_b_path,
             "--rounds", str(args.rounds),
-            "--seed", str(seed),
             "--output-dir", match_dir,
         ]
         if not args.engine_python:
@@ -151,7 +148,6 @@ def main():
             handle.write(output)
         if code != 0:
             failures.append({
-                "seed": seed,
                 "swap": False,
                 "return_code": code,
                 "timed_out": timed_out,
@@ -174,7 +170,6 @@ def main():
             summaries.append(_parse_summary(summary_path))
         else:
             failures.append({
-                "seed": seed,
                 "swap": False,
                 "return_code": parse_code,
                 "timed_out": parse_timed_out,
@@ -193,7 +188,6 @@ def main():
                 "--bot-a", bot_b_path,
                 "--bot-b", args.bot_a,
                 "--rounds", str(args.rounds),
-                "--seed", str(seed),
                 "--output-dir", swap_dir,
             ]
             if not args.engine_python:
@@ -207,7 +201,6 @@ def main():
                 handle.write(swap_out)
             if swap_code != 0:
                 failures.append({
-                    "seed": seed,
                     "swap": True,
                     "return_code": swap_code,
                     "timed_out": swap_timed_out,
@@ -231,7 +224,6 @@ def main():
                 summaries.append(_parse_summary(swap_summary_path))
             else:
                 failures.append({
-                    "seed": seed,
                     "swap": True,
                     "return_code": swap_parse_code,
                     "timed_out": swap_parse_timed_out,

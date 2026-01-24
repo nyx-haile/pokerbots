@@ -375,7 +375,7 @@ def _discard_equity_impl(
     start_time = time.perf_counter()
     samples = 0
     while samples < samples_limit:
-        if max_seconds > 0 and time.perf_counter() - start_time >= max_seconds:
+        if samples > 0 and max_seconds > 0 and time.perf_counter() - start_time >= max_seconds:
             break
         sample_cards = rng.sample(deck, needed)
         if opp_hand_size == 3:
