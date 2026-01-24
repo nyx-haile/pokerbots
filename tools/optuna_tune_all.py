@@ -59,7 +59,6 @@ def _run_suite(args, bot_a_path, bot_b_path, trial_dir):
         "--engine-dir", args.engine_dir,
         "--rounds", str(args.rounds),
         "--matches", str(args.matches),
-        "--seed-start", str(args.seed_start),
         "--output-dir", trial_dir,
         "--match-timeout", str(args.match_timeout),
     ]
@@ -131,7 +130,6 @@ def main():
     parser.add_argument("--bot-python", default=None, help="Python executable for bots")
     parser.add_argument("--rounds", type=int, default=1000, help="Rounds per match")
     parser.add_argument("--matches", type=int, default=2, help="Seeds per trial")
-    parser.add_argument("--seed-start", type=int, default=1, help="Starting seed")
     parser.add_argument("--trials", type=int, default=50, help="Optuna trials")
     parser.add_argument("--study-name", default=None, help="Study name")
     parser.add_argument("--storage", default=None, help="Optuna storage URL")
