@@ -951,6 +951,30 @@ def _cap_raise_for_lock_defense(player: PlayerView, raise_amount: int) -> int:
     return max_safe
 
 
+def _is_desperate(player: PlayerView) -> bool:
+    """
+    Check if we're in a desperate state where opponent can lock the win
+    by folding. In this state, we need high-variance aggressive play.
+    """
+    if not _ENABLE_LOCK_WIN:
+        return False
+    round_num = getattr(player, "round_num", 0)
+    if round_num <= 0:
+        return False
+    hero_bankroll = getattr(player.hero, "bankroll", 0)
+    if hero_bankroll >= 0:
+        return False  # We're ahead or even, not desperate
+    
+    # Check if opponent can lock by folding all remaining hands
+    rounds_left = max(0, NUM_ROUNDS - round_num)
+    opp_starts_bb = not getattr(player.hero, "blind", False)
+    opp_future_loss = _blind_loss_for_rounds(rounds_left, opp_starts_bb)
+    opponent_bankroll = -hero_bankroll
+    
+    # Opponent can lock if their bankroll > their future blind losses
+    return opponent_bankroll > opp_future_loss
+
+
 def play(bot):
     """
     Strategy entry point called by player.py.
@@ -958,8 +982,16 @@ def play(bot):
     This function should read the live fields on player and return an action
     instance from skeleton.actions.
     """
+    # Win-lock: if we can lock the win, do it
     if _should_lock_win(bot):
-        return _lock_win_action(bot)
+        from strategies.lockwin import LockWinPolicy
+        return LockWinPolicy.play(bot)
+    
+    # Desperate mode: if opponent can lock, play aggressively
+    if _is_desperate(bot):
+        from strategies.lockwin import DesperatePolicy
+        return DesperatePolicy.play(bot)
+    
     policy_class = _select_round_policy(bot)
     if not policy_class and bot.street <= 0:
         policy_class = _maybe_set_policy(bot)
