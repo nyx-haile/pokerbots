@@ -1,0 +1,6 @@
+Metadata-Version: 2.1
+Name: neuropoker
+Version: 0.0.1
+Summary: Experimental AI for poker
+Requires-Python: ==3.7.17
+Description-Content-Type: text/markdown

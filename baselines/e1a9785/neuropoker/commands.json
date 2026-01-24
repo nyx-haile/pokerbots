@@ -1,0 +1,4 @@
+{
+    "build": ["python3.7", "scripts/ensure_pkrbot.py"],
+    "run": ["python3.7", "player.py"]
+}

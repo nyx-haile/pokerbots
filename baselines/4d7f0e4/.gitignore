@@ -1,0 +1,6 @@
+documentation/*
+engine-2026/*
+runs/*
+tuning/*
+__pycache__/
+*.pyc
