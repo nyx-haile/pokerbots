@@ -6,6 +6,7 @@ import random
 from typing import Any, Iterable, Mapping, Optional, Sequence, Tuple, Dict, List
 
 import stats
+from skeleton.states import BIG_BLIND, NUM_ROUNDS, SMALL_BLIND
 
 _INFO_PENALTY = 0.05
 _INFO_PENALTY_MIN = 0.0
@@ -39,6 +40,7 @@ _LAST_HIDDEN = None
 _POLICY_EPSILON = float(os.environ.get("NEUROPOKER_POLICY_EPSILON", "0.15") or "0.15")
 _POLICY_LR = float(os.environ.get("NEUROPOKER_POLICY_LR", "0.15") or "0.15")
 _POLICY_STATS = {}
+_ENABLE_LOCK_WIN = os.environ.get("NEUROPOKER_ENABLE_LOCK_WIN", "1") == "1"
 
 
 def active_variant_id() -> str:
@@ -212,6 +214,10 @@ def _load_param_file() -> Mapping[str, Tuple[float, ...]]:
     _maybe_group(
         "tight_equity_threshold",
         ("tight_equity_threshold",),
+    )
+    _maybe_group(
+        "tight_fold_lr",
+        ("tight_fold_lr",),
     )
     _maybe_group(
         "bluff_weakness_threshold",
@@ -388,6 +394,13 @@ _TIGHT_EQUITY_THRESHOLD = _load_float_list(
     1,
     (0.6,),
     param_key="tight_equity_threshold",
+    param_values=_PARAM_VALUES,
+)[0]
+_TIGHT_FOLD_LR = _load_float_list(
+    "NEUROPOKER_TIGHT_FOLD_LR",
+    1,
+    (0.12,),
+    param_key="tight_fold_lr",
     param_values=_PARAM_VALUES,
 )[0]
 _BLUFF_WEAKNESS_THRESHOLD = _load_float_list(
@@ -736,9 +749,18 @@ def _bluff_threshold(player: PlayerView) -> float:
     return max(0.0, _BLUFF_WEAKNESS_THRESHOLD - bias + opponent_bias)
 
 
+def _tight_equity_threshold(player: PlayerView) -> float:
+    base = _TIGHT_EQUITY_THRESHOLD
+    fold_rate = _opponent_fold_rate(player.street, None)
+    if fold_rate <= 0.0 or _TIGHT_FOLD_LR <= 0.0:
+        return base
+    adjustment = fold_rate * _TIGHT_FOLD_LR
+    return max(0.0, base - adjustment)
+
+
 def _choose_policy_for_round(player: PlayerView, equity: float):
     bluff_cls, tight_cls = _policy_classes()
-    if equity >= _TIGHT_EQUITY_THRESHOLD:
+    if equity >= _tight_equity_threshold(player):
         return tight_cls
     weakness = _opponent_weakness_score(player)
     if weakness >= _bluff_threshold(player) and _bluff_allowed(player):
@@ -753,6 +775,93 @@ def _bluff_allowed(player: PlayerView) -> bool:
     return bankroll >= -_BLUFF_DISABLE_BEHIND
 
 
+def _remaining_fold_loss(player: PlayerView) -> int:
+    round_num = getattr(player, "round_num", 0)
+    if round_num <= 0:
+        return 0
+    rounds_left = max(0, NUM_ROUNDS - round_num + 1)
+    if rounds_left <= 0:
+        return 0
+    current_loss = int(max(0, getattr(player.hero, "contribution", 0)))
+    if current_loss <= 0:
+        current_loss = BIG_BLIND if getattr(player.hero, "blind", False) else SMALL_BLIND
+    future_loss = 0
+    big_blind = not getattr(player.hero, "blind", False)
+    for _ in range(rounds_left - 1):
+        future_loss += BIG_BLIND if big_blind else SMALL_BLIND
+        big_blind = not big_blind
+    return current_loss + future_loss
+
+
+def _should_lock_win(player: PlayerView) -> bool:
+    if not _ENABLE_LOCK_WIN:
+        return False
+    bankroll = getattr(player.hero, "bankroll", 0)
+    if bankroll <= 0:
+        return False
+    return bankroll > _remaining_fold_loss(player)
+
+
+def _lock_win_action(player: PlayerView):
+    from skeleton.actions import CallAction, CheckAction, DiscardAction, FoldAction
+
+    legal_actions = set(player.hero.legal_actions)
+    if DiscardAction in legal_actions:
+        return DiscardAction(0)
+    if FoldAction in legal_actions and player.hero.continue_cost > 0:
+        return FoldAction()
+    if CheckAction in legal_actions and player.hero.continue_cost == 0:
+        return CheckAction()
+    if CallAction in legal_actions:
+        return CallAction()
+    if CheckAction in legal_actions:
+        return CheckAction()
+    return FoldAction()
+
+
+def _opponent_future_fold_loss(player: PlayerView, rounds_left: int) -> int:
+    if rounds_left <= 0:
+        return 0
+    opponent_big = bool(getattr(player.hero, "blind", False))
+    total = 0
+    for _ in range(rounds_left):
+        total += BIG_BLIND if opponent_big else SMALL_BLIND
+        opponent_big = not opponent_big
+    return total
+
+
+def _opponent_can_lock_after_fold(player: PlayerView) -> bool:
+    round_num = getattr(player, "round_num", 0)
+    if round_num <= 0:
+        return False
+    rounds_left = max(0, NUM_ROUNDS - round_num)
+    if rounds_left <= 0:
+        return False
+    loss_now = int(max(0, getattr(player.hero, "contribution", 0)))
+    if loss_now <= 0:
+        loss_now = BIG_BLIND if getattr(player.hero, "blind", False) else SMALL_BLIND
+    hero_bankroll = getattr(player.hero, "bankroll", 0)
+    opponent_bankroll = -hero_bankroll + loss_now
+    return opponent_bankroll > _opponent_future_fold_loss(player, rounds_left)
+
+
+def _avoid_lock_win_fold(player: PlayerView, action):
+    from skeleton.actions import CallAction, CheckAction, FoldAction
+
+    if not isinstance(action, FoldAction):
+        return action
+    if not _opponent_can_lock_after_fold(player):
+        return action
+    legal_actions = set(player.hero.legal_actions)
+    if CheckAction in legal_actions and player.hero.continue_cost == 0:
+        return CheckAction()
+    if CallAction in legal_actions:
+        return CallAction()
+    if CheckAction in legal_actions:
+        return CheckAction()
+    return action
+
+
 def play(bot):
     """
     Strategy entry point called by player.py.
@@ -760,6 +869,8 @@ def play(bot):
     This function should read the live fields on player and return an action
     instance from skeleton.actions.
     """
+    if _should_lock_win(bot):
+        return _lock_win_action(bot)
     policy_class = _select_round_policy(bot)
     if not policy_class and bot.street <= 0:
         policy_class = _maybe_set_policy(bot)
@@ -774,18 +885,18 @@ def play(bot):
         action = policy_class.play(bot)
         if _discard_action_required(bot):
             action = _force_discard_if_needed(bot, action)
-        return action
+        return _avoid_lock_win_fold(bot, action)
     from skeleton.actions import CheckAction, CallAction, FoldAction
     legal_actions = set(bot.hero.legal_actions)
     if FoldAction in legal_actions and bot.hero.continue_cost > 0:
-        return FoldAction()
+        return _avoid_lock_win_fold(bot, FoldAction())
     if CheckAction in legal_actions and bot.hero.continue_cost == 0:
         return CheckAction()
     if CallAction in legal_actions:
         return CallAction()
     if CheckAction in legal_actions:
         return CheckAction()
-    return FoldAction()
+    return _avoid_lock_win_fold(bot, FoldAction())
 
 
 def _force_discard_if_needed(player: PlayerView, action):

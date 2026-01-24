@@ -240,7 +240,7 @@ def main():
     base_run = base_commands.get("run", [])
 
     def objective(trial):
-        env_vars = []
+        env_vars = ["NEUROPOKER_ENABLE_LOCK_WIN=0"]
         batch = args.batch
 
         if batch in ("all", "preflop"):
@@ -347,7 +347,9 @@ def main():
 
         if batch in ("all", "policy"):
             tight_equity_threshold = trial.suggest_float("tight_equity_threshold", 0.5, 0.75)
+            tight_fold_lr = trial.suggest_float("tight_fold_lr", 0.0, 0.35)
             env_vars.append("NEUROPOKER_TIGHT_EQUITY_THRESHOLD=%.4f" % tight_equity_threshold)
+            env_vars.append("NEUROPOKER_TIGHT_FOLD_LR=%.4f" % tight_fold_lr)
 
         env_run = ["env"] + env_vars + list(base_run)
         tuned_commands = dict(base_commands)
