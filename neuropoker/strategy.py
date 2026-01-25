@@ -958,7 +958,7 @@ def _remaining_fold_loss(player: PlayerView) -> int:
     round_num = getattr(player, "round_num", 0)
     if round_num <= 0:
         return 0
-    rounds_left = max(0, NUM_ROUNDS - round_num + 1)
+    rounds_left = max(0, NUM_ROUNDS - round_num )
     if rounds_left <= 0:
         return 0
     current_loss = int(max(0, getattr(player.hero, "contribution", 0)))
@@ -966,11 +966,13 @@ def _remaining_fold_loss(player: PlayerView) -> int:
         current_loss = BIG_BLIND if getattr(player.hero, "blind", False) else SMALL_BLIND
     future_loss = 0
     big_blind = not getattr(player.hero, "blind", False)
-    for _ in range(rounds_left - 1):
-        future_loss += BIG_BLIND if big_blind else SMALL_BLIND
-        big_blind = not big_blind
-    return current_loss + future_loss
 
+    future_loss =  3*(rounds_left // 2)
+    if big_blind and rounds_left % 2:
+        future_loss += 1
+    elif rounds_left % 2:
+        future_loss += 2
+    return future_loss
 
 def _should_lock_win(player: PlayerView) -> bool:
     if not _ENABLE_LOCK_WIN:
@@ -978,7 +980,7 @@ def _should_lock_win(player: PlayerView) -> bool:
     bankroll = getattr(player.hero, "bankroll", 0)
     if bankroll <= 0:
         return False
-    return bankroll > _remaining_fold_loss(player)
+    return bankroll > _remaining_fold_loss(player) + player.hero.pot_total
 
 
 def _lock_win_action(player: PlayerView):
