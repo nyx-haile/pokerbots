@@ -60,12 +60,8 @@ class Player(Bot):
         self._log(f"sys.path[0:3]={sys.path[:3]}")
         self._log(f"env.PYTHONPATH={os.environ.get('PYTHONPATH')}")
         self._log(f"env.NEUROPOKER_EVAL_BACKEND={os.environ.get('NEUROPOKER_EVAL_BACKEND')}")
-
-        try:
-            import stats  # noqa: F401
-            self._log("stats=ok")
-        except Exception as exc:
-            self._log(f"stats=missing ({exc})")
+        import stats  # noqa: F401
+        self._log("stats=ok")
 
     def _log(self, message: str) -> None:
         print(f"[bot] {message}", flush=True)

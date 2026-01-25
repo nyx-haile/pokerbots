@@ -4,14 +4,7 @@ import random
 import time
 from itertools import combinations
 from functools import lru_cache
-try:
-    from pokerstove import CardSet as cs
-except ImportError:
-    cs = None
-try:
-    import pkrbot
-except ImportError:
-    pkrbot = None
+import pkrbot
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
 _BACKEND = os.environ.get("NEUROPOKER_EVAL_BACKEND", "pkrbot").lower()
@@ -56,17 +49,11 @@ class Card:
 
 
 def _env_float(name: str, default: float) -> float:
-    try:
-        return float(os.environ.get(name, default))
-    except (TypeError, ValueError):
-        return default
+    return float(os.environ.get(name, default))
 
 
 def _env_int(name: str, default: int) -> int:
-    try:
-        return int(os.environ.get(name, default))
-    except (TypeError, ValueError):
-        return default
+    return int(os.environ.get(name, default))
 
 _HARD_ACTION_TIMEOUT = 9.0  # Hard 9-second cap for any search function
 _action_start_time = None
@@ -384,14 +371,14 @@ def discard_equity(
     board = list(board) if board.__class__ is not list else board
     if not hole:
         return ()
-    
+
     # Cap max_seconds to remaining time (incremental results returned on timeout)
     remaining = _time_remaining()
     if remaining < float('inf') and max_seconds is not None:
         max_seconds = min(max_seconds, remaining)
     elif remaining < float('inf'):
         max_seconds = remaining
-    
+
     # Use cached path when no time limit specified and timer isn't critical
     if n_samples is not None and n_samples > 0 and (max_seconds is None or max_seconds == 0):
         if not return_metadata:
@@ -407,16 +394,16 @@ def _discard_equity_impl(
     return_metadata: bool = False,
 ) -> tuple:
     known = set(hole + board)
-    
+
     opp_discard_pending = 1 if len(board) == 2 else 0
     remaining_cards = max(0, 6 - len(board) - 1 - opp_discard_pending)
     opp_hand_size = 3 if opp_discard_pending else 2
     needed = opp_hand_size + remaining_cards
-    
+
     # Build deck excluding known cards
     full_deck = list(_FULL_DECK)
     deck = [card for card in full_deck if card not in known]
-    
+
     if needed > len(deck):
         return _enumerate_discard_equity(hole, board, deck, remaining_cards)
 
@@ -426,7 +413,7 @@ def _discard_equity_impl(
 
     if max_seconds is None:
         max_seconds = _DEFAULT_DISCARD_SECONDS
-    
+
     # Use pkrbot.Deck for faster sampling
     if pkrbot is not None:
         seed = None
@@ -440,10 +427,10 @@ def _discard_equity_impl(
         if max_seconds == 0 and n_samples is not None:
             seed = hash((tuple(hole), tuple(board), int(n_samples))) & 0xFFFFFFFF
         rng = random.Random(seed)
-    
+
     stats = {discard: {"wins": 0, "losses": 0, "ties": 0, "samples": 0} for discard in hole}
     hole_variants = {discard: [card for card in hole if card != discard] for discard in hole}
-    
+
     # Precompute pkrbot Card objects for hero cards
     if pk_deck is not None:
         hole_pk = {discard: [_PKRBOT_CARD_CACHE[c] for c in cards] for discard, cards in hole_variants.items()}
@@ -459,7 +446,7 @@ def _discard_equity_impl(
                 break
         if samples > 0 and samples % 100 == 0 and _should_abort():
             break
-        
+
         if pk_deck is not None:
             sample_cards = pk_deck.sample(needed)
             if opp_hand_size == 3:
@@ -476,7 +463,7 @@ def _discard_equity_impl(
                 opp_hand = sample_cards[:2]
                 opp_discard_card = None
                 board_fill = sample_cards[2:]
-            
+
             for discard, my_hole_pk in hole_pk.items():
                 final_board = board_pk + [_PKRBOT_CARD_CACHE[discard]]
                 if opp_discard_card is not None:
@@ -576,7 +563,7 @@ def estimate_equity(
         max_seconds = _DEFAULT_EQUITY_SECONDS
     if discard_samples is None:
         discard_samples = _DEFAULT_DISCARD_SAMPLES // 5
-    
+
     # Cap max_seconds to remaining time (incremental results returned on timeout)
     remaining = _time_remaining()
     if remaining < float('inf'):
@@ -611,7 +598,7 @@ def _estimate_equity_cached(
     start_time = time.perf_counter()
     known = set(hero_int + list(board_int))
     deck = [card for card in _FULL_DECK if card not in known]
-    
+
     # Use pkrbot.Deck for faster flop sampling
     if pkrbot is not None:
         pk_deck = pkrbot.Deck(seed)
@@ -683,7 +670,7 @@ def _mc_equity_serial(
     wins = losses = ties = 0
     runs = 0
     start_time = time.perf_counter()
-    
+
     # Fast path using pkrbot.Deck and direct evaluation
     if pkrbot is not None:
         pk_deck = pkrbot.Deck()
@@ -692,7 +679,7 @@ def _mc_equity_serial(
         board_cards = [_PKRBOT_CARD_CACHE[c] for c in board_base]
         pk_eval = pkrbot.evaluate
         draw_count = 2 + remaining_board
-        
+
         for i in range(samples):
             # Check timeout every 20 iterations to reduce overhead
             if i > 0 and i % 20 == 0:
@@ -714,7 +701,7 @@ def _mc_equity_serial(
                 ties += 1
             runs += 1
         return wins, losses, ties, runs
-    
+
     # Fallback for non-pkrbot
     rng = random.Random()
     sample = rng.sample

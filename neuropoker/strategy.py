@@ -72,10 +72,7 @@ def _load_thresholds(
     parts = [part.strip() for part in raw.split(",") if part.strip()]
     if len(parts) != 3:
         return default
-    try:
-        values = tuple(float(part) for part in parts)
-    except ValueError:
-        return default
+    values = tuple(float(part) for part in parts)
     if values[0] < values[1] or values[1] < values[2]:
         return default
     return values

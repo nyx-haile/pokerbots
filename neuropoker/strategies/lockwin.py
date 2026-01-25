@@ -18,7 +18,7 @@ class LockWinPolicy:
     @staticmethod
     def play(player):
         legal_actions = set(player.hero.legal_actions)
-        
+
         if DiscardAction in legal_actions:
             return DiscardAction(0)
         if FoldAction in legal_actions and player.hero.continue_cost > 0:
@@ -100,19 +100,19 @@ class DesperatePolicy:
         # Defensive mode: only raise with very strong hands (tunable threshold)
         if RaiseAction in legal_actions:
             min_raise, max_raise = getattr(player.hero, "raise_bounds", (0, 0))
-            
+
             # Only raise with nut-level equity
             if equity >= core._DESPERATE_NUT_THRESHOLD and min_raise > 0:
                 # Small value raises only - don't bloat the pot
                 target = min(max_raise, max(min_raise, int(pot_total * 0.5)))
                 return RaiseAction(target)
-            
+
             # No bluffing when desperate - we can't afford to lose chips
 
         # Defensive mode: tighter calling using tunable penalty
         base_call_margin = core._call_margin_by_street(player.street)
         defensive_call_margin = base_call_margin - core._DESPERATE_CALL_PENALTY
-        
+
         # Only call if we have good equity relative to pot odds
         if equity >= pot_odds + defensive_call_margin:
             if CallAction in legal_actions:
@@ -123,16 +123,16 @@ class DesperatePolicy:
         # Check if free
         if CheckAction in legal_actions and continue_cost == 0:
             return CheckAction()
-        
+
         # Fold marginal hands - don't give opponent chips
         if equity < pot_odds - 0.05:
             # But use lock defense to avoid giving them win-lock
             return core._avoid_lock_win_fold(player, FoldAction())
-        
+
         # Borderline - call small bets, fold large ones
         if continue_cost <= pot_total * 0.20 and equity >= pot_odds - 0.10:
             if CallAction in legal_actions:
                 return CallAction()
-        
+
         # Default to lock-aware fold
         return core._avoid_lock_win_fold(player, FoldAction())
