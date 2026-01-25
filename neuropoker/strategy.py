@@ -6,6 +6,7 @@ import os
 import random
 import time
 from typing import Any, Iterable, Mapping, Optional, Sequence, Tuple, Dict, List
+from skeleton.actions import CallAction, CheckAction, DiscardAction, FoldAction, RaiseAction
 
 import stats
 from skeleton.states import BIG_BLIND, NUM_ROUNDS, SMALL_BLIND, STARTING_STACK
@@ -1179,19 +1180,21 @@ def play(bot):
     This function should read the live fields on player and return an action
     instance from skeleton.actions.
     """
+
+    from strategies.lockwin import LockWinPolicy, DesperatePolicy
     # Reset the action timer for hard 9-second cap in stats.py
     stats._reset_action_timer()
 
     # Win-lock: if we can lock the win, do it
-    if _should_lock_win(bot):
-        from strategies.lockwin import LockWinPolicy
+    if _should_lock_win(bot) or bot.hero.policy_class == LockWinPolicy:
         print("locking win")
+        bot.hero.policy_class = LockWinPolicy
         return LockWinPolicy.play(bot)
 
     # Defensive mode: if opponent can lock but hasn't, play tight
     if _is_desperate(bot) and bot.hero.enable_desperate:
-        from strategies.lockwin import DesperatePolicy
         print("DEFENSIVE MODE - opponent can lock")
+        bot.hero.policy_class = DesperatePolicy
         return DesperatePolicy.play(bot)
 
     # Near-desperate: flag for tighter play in normal policies
@@ -1216,7 +1219,6 @@ def play(bot):
             action = _force_discard_if_needed(bot, action)
         return _avoid_lock_win_fold(bot, action)
     # Fallback: use pot-odds-aware logic instead of blind folding
-    from skeleton.actions import CheckAction, CallAction, FoldAction
     legal_actions = set(bot.hero.legal_actions)
     # Calculate pot odds for the fallback decision
     pot_total = max(1, getattr(bot.hero, "pot_total", 1))
@@ -1245,7 +1247,6 @@ def play(bot):
 
 
 def _force_discard_if_needed(player: PlayerView, action):
-    from skeleton.actions import DiscardAction
     if isinstance(action, DiscardAction):
         return action
     legal_actions = set(player.hero.legal_actions)
@@ -1288,7 +1289,6 @@ def _maybe_set_policy(player: PlayerView):
 
 def _discard_action_required(player: PlayerView) -> bool:
     legal_actions = set(player.hero.legal_actions)
-    from skeleton.actions import DiscardAction
     return DiscardAction in legal_actions
 
 
@@ -1499,7 +1499,6 @@ def _preflop_open_decision(
     max_raise: int,
     pot_total: int,
 ):
-    from skeleton.actions import CallAction, RaiseAction, CheckAction, FoldAction
     roll = _preflop_roll(player)
     raise_strong, raise_medium, raise_light = _PREFLOP_RAISE_THRESHOLDS
     call_strong, call_medium, call_light = _PREFLOP_CALL_THRESHOLDS
