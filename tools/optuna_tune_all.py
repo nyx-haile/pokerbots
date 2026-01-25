@@ -344,10 +344,69 @@ def main():
             )
 
         if batch in ("all", "policy"):
-            tight_equity_threshold = trial.suggest_float("tight_equity_threshold", 0.5, 0.75)
-            tight_fold_lr = trial.suggest_float("tight_fold_lr", 0.0, 0.35)
-            env_vars.append("NEUROPOKER_TIGHT_EQUITY_THRESHOLD=%.4f" % tight_equity_threshold)
-            env_vars.append("NEUROPOKER_TIGHT_FOLD_LR=%.4f" % tight_fold_lr)
+            tight_equity_threshold = trial.suggest_float("tight_equity_threshold", 0.5, 0.75, step=0.05)
+            tight_fold_lr = trial.suggest_float("tight_fold_lr", 0.0, 0.35, step=0.05)
+            env_vars.append("NEUROPOKER_TIGHT_EQUITY_THRESHOLD=%.2f" % tight_equity_threshold)
+            env_vars.append("NEUROPOKER_TIGHT_FOLD_LR=%.2f" % tight_fold_lr)
+
+        if batch in ("all", "lead_protection"):
+            # Lead protection thresholds (coarse grid for faster convergence)
+            lead_prot_t1 = trial.suggest_float("lead_prot_t1", 0.15, 0.30, step=0.05)
+            lead_prot_t2 = trial.suggest_float("lead_prot_t2", 0.35, 0.50, step=0.05)
+            lead_prot_t3 = trial.suggest_float("lead_prot_t3", 0.55, 0.70, step=0.05)
+            lead_prot_t4 = trial.suggest_float("lead_prot_t4", 0.75, 0.90, step=0.05)
+            # Adjustments
+            lead_prot_a1 = trial.suggest_float("lead_prot_a1", 0.01, 0.04, step=0.01)
+            lead_prot_a2 = trial.suggest_float("lead_prot_a2", 0.03, 0.07, step=0.01)
+            lead_prot_a3 = trial.suggest_float("lead_prot_a3", 0.05, 0.10, step=0.01)
+            lead_prot_a4 = trial.suggest_float("lead_prot_a4", 0.08, 0.14, step=0.02)
+            # Size multipliers (decreasing)
+            lead_prot_s1 = trial.suggest_float("lead_prot_s1", 0.85, 0.95, step=0.05)
+            lead_prot_s2 = trial.suggest_float("lead_prot_s2", 0.75, 0.85, step=0.05)
+            lead_prot_s3 = trial.suggest_float("lead_prot_s3", 0.65, 0.75, step=0.05)
+            lead_prot_s4 = trial.suggest_float("lead_prot_s4", 0.50, 0.65, step=0.05)
+            lead_prot_pot_factor = trial.suggest_float("lead_prot_pot_factor", 0.0, 0.5, step=0.1)
+            env_vars.append(
+                "NEUROPOKER_LEAD_PROT_THRESHOLDS=%.2f,%.2f,%.2f,%.2f"
+                % (lead_prot_t1, lead_prot_t2, lead_prot_t3, lead_prot_t4)
+            )
+            env_vars.append(
+                "NEUROPOKER_LEAD_PROT_ADJUSTMENTS=%.2f,%.2f,%.2f,%.2f"
+                % (lead_prot_a1, lead_prot_a2, lead_prot_a3, lead_prot_a4)
+            )
+            env_vars.append(
+                "NEUROPOKER_LEAD_PROT_SIZE_MULTS=%.2f,%.2f,%.2f,%.2f"
+                % (lead_prot_s1, lead_prot_s2, lead_prot_s3, lead_prot_s4)
+            )
+            env_vars.append("NEUROPOKER_LEAD_PROT_POT_FACTOR=%.2f" % lead_prot_pot_factor)
+
+        if batch in ("all", "opponent_model"):
+            opp_passive_threshold = trial.suggest_float("opp_passive_threshold", 0.10, 0.35, step=0.05)
+            opp_station_call_rate = trial.suggest_float("opp_station_call_rate", 0.40, 0.60, step=0.05)
+            opp_station_fold_rate = trial.suggest_float("opp_station_fold_rate", 0.15, 0.35, step=0.05)
+            opp_passive_value_mult = trial.suggest_float("opp_passive_value_mult", 1.0, 1.4, step=0.1)
+            opp_station_value_mult = trial.suggest_float("opp_station_value_mult", 1.2, 1.6, step=0.1)
+            env_vars.append("NEUROPOKER_OPP_PASSIVE_THRESHOLD=%.2f" % opp_passive_threshold)
+            env_vars.append("NEUROPOKER_OPP_STATION_CALL_RATE=%.2f" % opp_station_call_rate)
+            env_vars.append("NEUROPOKER_OPP_STATION_FOLD_RATE=%.2f" % opp_station_fold_rate)
+            env_vars.append("NEUROPOKER_OPP_PASSIVE_VALUE_MULT=%.2f" % opp_passive_value_mult)
+            env_vars.append("NEUROPOKER_OPP_STATION_VALUE_MULT=%.2f" % opp_station_value_mult)
+
+        if batch in ("all", "early_boost"):
+            early_boost_r1 = trial.suggest_int("early_boost_r1", 50, 150, step=25)
+            early_boost_r2 = trial.suggest_int("early_boost_r2", 150, 300, step=25)
+            early_boost_m1 = trial.suggest_float("early_boost_m1", 1.2, 1.6, step=0.1)
+            early_boost_m2 = trial.suggest_float("early_boost_m2", 1.1, 1.4, step=0.1)
+            env_vars.append("NEUROPOKER_EARLY_BOOST_ROUNDS=%d,%d" % (early_boost_r1, early_boost_r2))
+            env_vars.append("NEUROPOKER_EARLY_BOOST_MULTS=%.2f,%.2f" % (early_boost_m1, early_boost_m2))
+
+        if batch in ("all", "desperate"):
+            desperate_nut_threshold = trial.suggest_float("desperate_nut_threshold", 0.65, 0.80, step=0.05)
+            desperate_raise_margin = trial.suggest_float("desperate_raise_margin", 0.06, 0.16, step=0.02)
+            desperate_call_penalty = trial.suggest_float("desperate_call_penalty", 0.04, 0.12, step=0.02)
+            env_vars.append("NEUROPOKER_DESPERATE_NUT_THRESHOLD=%.2f" % desperate_nut_threshold)
+            env_vars.append("NEUROPOKER_DESPERATE_RAISE_MARGIN=%.2f" % desperate_raise_margin)
+            env_vars.append("NEUROPOKER_DESPERATE_CALL_PENALTY=%.2f" % desperate_call_penalty)
 
         env_run = ["env"] + env_vars + list(base_run)
         tuned_commands = dict(base_commands)

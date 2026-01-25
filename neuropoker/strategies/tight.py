@@ -79,6 +79,11 @@ class TightPolicy:
         call_margin += range_bias
         raise_margin += raise_variant
         call_margin += call_variant
+        
+        # Tighten play when approaching win-lock (pot-aware)
+        lead_adj = core._lead_protection_adjustment(player, pot_total)
+        raise_margin += lead_adj
+        call_margin -= lead_adj  # Harder to call when protecting lead
 
         if core._USE_RANDOM_POLICY:
             policy_bias = core._policy_bias(player, equity, pot_odds)
@@ -146,7 +151,8 @@ class TightPolicy:
             elif equity < core._AGGRO_EQUITY:
                 pass
             elif equity > raise_threshold and min_raise > 0:
-                target = core._raise_size(pot_total, min_raise, max_raise, equity)
+                value_mult = core._value_extraction_multiplier(player)
+                target = core._raise_size(pot_total, min_raise, max_raise, equity, value_mult=value_mult)
                 target = core._adjust_value_raise(target, min_raise, max_raise, fold_rate, equity)
                 target = core._cap_raise_for_lock_defense(player, target)
                 if target >= min_raise:

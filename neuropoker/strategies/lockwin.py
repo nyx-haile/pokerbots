@@ -34,18 +34,10 @@ class LockWinPolicy:
 
 class DesperatePolicy:
     """
-    Policy when opponent can lock the win - we need high-variance aggressive play.
-    - Lower raise thresholds (raise with weaker hands)
-    - Increase bluff frequency
-    - Call more liberally (chase draws)
-    - Push all-in with marginal +EV hands
+    Policy when opponent can lock the win but hasn't done so yet.
+    Play TIGHTER to avoid giving them chips - they're likely playing for value.
+    Uses tunable parameters from strategy module.
     """
-
-    # Desperation adjustments
-    RAISE_MARGIN_REDUCTION = 0.15  # Makes raising easier
-    CALL_MARGIN_BONUS = 0.12       # Makes calling easier
-    BLUFF_RATE_MULT = 3.0          # Triple bluff rate
-    ALLIN_EQUITY_THRESHOLD = 0.42  # Push all-in with 42%+ equity
 
     @staticmethod
     def play(player):
@@ -105,57 +97,42 @@ class DesperatePolicy:
             else:
                 equity = quick_equity
 
-        # Desperate mode: lower raise threshold, push all-in with marginal hands
+        # Defensive mode: only raise with very strong hands (tunable threshold)
         if RaiseAction in legal_actions:
             min_raise, max_raise = getattr(player.hero, "raise_bounds", (0, 0))
             
-            # Push all-in with reasonable equity - we need to gamble
-            if equity >= DesperatePolicy.ALLIN_EQUITY_THRESHOLD and min_raise > 0:
-                return RaiseAction(max_raise)
-            
-            # Lower raise threshold significantly
-            base_raise_margin = core._raise_margin_by_street(player.street)
-            desperate_raise_margin = base_raise_margin - DesperatePolicy.RAISE_MARGIN_REDUCTION
-            raise_threshold = pot_odds + desperate_raise_margin
-            
-            if equity > raise_threshold and min_raise > 0:
-                # Raise aggressively - pot-sized or larger
-                target = min(max_raise, max(min_raise, int(pot_total * 1.5)))
+            # Only raise with nut-level equity
+            if equity >= core._DESPERATE_NUT_THRESHOLD and min_raise > 0:
+                # Small value raises only - don't bloat the pot
+                target = min(max_raise, max(min_raise, int(pot_total * 0.5)))
                 return RaiseAction(target)
             
-            # Increased bluff rate
-            base_bluff_rate = 0.006  # From bluff.py
-            desperate_bluff_rate = base_bluff_rate * DesperatePolicy.BLUFF_RATE_MULT
-            if equity < pot_odds - 0.05:
-                import random
-                if random.random() < desperate_bluff_rate:
-                    target = min(max_raise, max(min_raise, int(pot_total * 0.75)))
-                    if target >= min_raise:
-                        return RaiseAction(target)
+            # No bluffing when desperate - we can't afford to lose chips
 
-        # Desperate mode: more liberal calling
+        # Defensive mode: tighter calling using tunable penalty
         base_call_margin = core._call_margin_by_street(player.street)
-        desperate_call_margin = base_call_margin + DesperatePolicy.CALL_MARGIN_BONUS
-
-        # Never fold if equity is anywhere close to pot odds
-        if equity >= pot_odds - desperate_call_margin:
+        defensive_call_margin = base_call_margin - core._DESPERATE_CALL_PENALTY
+        
+        # Only call if we have good equity relative to pot odds
+        if equity >= pot_odds + defensive_call_margin:
             if CallAction in legal_actions:
                 return CallAction()
             if CheckAction in legal_actions:
                 return CheckAction()
 
-        # Even with bad equity, consider calling small bets
-        if continue_cost <= pot_total * 0.25 and equity >= 0.20:
-            if CallAction in legal_actions:
-                return CallAction()
-
-        # Check if possible
+        # Check if free
         if CheckAction in legal_actions and continue_cost == 0:
             return CheckAction()
-        if CallAction in legal_actions:
-            return CallAction()
-        if CheckAction in legal_actions:
-            return CheckAction()
         
-        # Avoid folding - use the lock defense
+        # Fold marginal hands - don't give opponent chips
+        if equity < pot_odds - 0.05:
+            # But use lock defense to avoid giving them win-lock
+            return core._avoid_lock_win_fold(player, FoldAction())
+        
+        # Borderline - call small bets, fold large ones
+        if continue_cost <= pot_total * 0.20 and equity >= pot_odds - 0.10:
+            if CallAction in legal_actions:
+                return CallAction()
+        
+        # Default to lock-aware fold
         return core._avoid_lock_win_fold(player, FoldAction())

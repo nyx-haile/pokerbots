@@ -241,6 +241,66 @@ def _load_param_file() -> Mapping[str, Tuple[float, ...]]:
         "pressure_foldrate_min",
         ("pressure_foldrate_min",),
     )
+    # Lead protection parameters
+    _maybe_group(
+        "lead_prot_thresholds",
+        ("lead_prot_t1", "lead_prot_t2", "lead_prot_t3", "lead_prot_t4"),
+    )
+    _maybe_group(
+        "lead_prot_adjustments",
+        ("lead_prot_a1", "lead_prot_a2", "lead_prot_a3", "lead_prot_a4"),
+    )
+    _maybe_group(
+        "lead_prot_size_mults",
+        ("lead_prot_s1", "lead_prot_s2", "lead_prot_s3", "lead_prot_s4"),
+    )
+    _maybe_group(
+        "lead_prot_pot_factor",
+        ("lead_prot_pot_factor",),
+    )
+    # Opponent modeling
+    _maybe_group(
+        "opp_passive_threshold",
+        ("opp_passive_threshold",),
+    )
+    _maybe_group(
+        "opp_station_call_rate",
+        ("opp_station_call_rate",),
+    )
+    _maybe_group(
+        "opp_station_fold_rate",
+        ("opp_station_fold_rate",),
+    )
+    _maybe_group(
+        "opp_passive_value_mult",
+        ("opp_passive_value_mult",),
+    )
+    _maybe_group(
+        "opp_station_value_mult",
+        ("opp_station_value_mult",),
+    )
+    # Early-round boost
+    _maybe_group(
+        "early_boost_rounds",
+        ("early_boost_r1", "early_boost_r2"),
+    )
+    _maybe_group(
+        "early_boost_mults",
+        ("early_boost_m1", "early_boost_m2"),
+    )
+    # Desperate policy
+    _maybe_group(
+        "desperate_nut_threshold",
+        ("desperate_nut_threshold",),
+    )
+    _maybe_group(
+        "desperate_raise_margin",
+        ("desperate_raise_margin",),
+    )
+    _maybe_group(
+        "desperate_call_penalty",
+        ("desperate_call_penalty",),
+    )
     return grouped
 
 
@@ -438,6 +498,115 @@ _PRESSURE_FOLDRATE_MIN = _load_float_list(
     1,
     (0.12,),
     param_key="pressure_foldrate_min",
+    param_values=_PARAM_VALUES,
+)[0]
+
+# Lead protection: stepwise function for nonlinear tuning
+# Each tier: (progress_threshold, margin_adjustment, size_multiplier)
+# Using separate arrays for Optuna compatibility
+_LEAD_PROT_THRESHOLDS = _load_float_list(
+    "NEUROPOKER_LEAD_PROT_THRESHOLDS",
+    4,
+    (0.2, 0.4, 0.6, 0.8),
+    param_key="lead_prot_thresholds",
+    param_values=_PARAM_VALUES,
+)
+_LEAD_PROT_ADJUSTMENTS = _load_float_list(
+    "NEUROPOKER_LEAD_PROT_ADJUSTMENTS",
+    4,
+    (0.02, 0.04, 0.06, 0.10),
+    param_key="lead_prot_adjustments",
+    param_values=_PARAM_VALUES,
+)
+_LEAD_PROT_SIZE_MULTS = _load_float_list(
+    "NEUROPOKER_LEAD_PROT_SIZE_MULTS",
+    4,
+    (0.9, 0.8, 0.7, 0.6),
+    param_key="lead_prot_size_mults",
+    param_values=_PARAM_VALUES,
+)
+# Pot-relative modifier: extra tightening when pot is large relative to our lead
+_LEAD_PROT_POT_FACTOR = _load_float_list(
+    "NEUROPOKER_LEAD_PROT_POT_FACTOR",
+    1,
+    (0.3,),  # multiply adjustment by (1 + pot/remaining * factor)
+    param_key="lead_prot_pot_factor",
+    param_values=_PARAM_VALUES,
+)[0]
+
+# Opponent modeling thresholds
+_OPP_PASSIVE_THRESHOLD = _load_float_list(
+    "NEUROPOKER_OPP_PASSIVE_THRESHOLD",
+    1,
+    (0.20,),
+    param_key="opp_passive_threshold",
+    param_values=_PARAM_VALUES,
+)[0]
+_OPP_STATION_CALL_RATE = _load_float_list(
+    "NEUROPOKER_OPP_STATION_CALL_RATE",
+    1,
+    (0.50,),
+    param_key="opp_station_call_rate",
+    param_values=_PARAM_VALUES,
+)[0]
+_OPP_STATION_FOLD_RATE = _load_float_list(
+    "NEUROPOKER_OPP_STATION_FOLD_RATE",
+    1,
+    (0.25,),
+    param_key="opp_station_fold_rate",
+    param_values=_PARAM_VALUES,
+)[0]
+_OPP_PASSIVE_VALUE_MULT = _load_float_list(
+    "NEUROPOKER_OPP_PASSIVE_VALUE_MULT",
+    1,
+    (1.2,),
+    param_key="opp_passive_value_mult",
+    param_values=_PARAM_VALUES,
+)[0]
+_OPP_STATION_VALUE_MULT = _load_float_list(
+    "NEUROPOKER_OPP_STATION_VALUE_MULT",
+    1,
+    (1.4,),
+    param_key="opp_station_value_mult",
+    param_values=_PARAM_VALUES,
+)[0]
+
+# Early-round sampling boost
+_EARLY_BOOST_ROUNDS = _load_float_list(
+    "NEUROPOKER_EARLY_BOOST_ROUNDS",
+    2,
+    (100.0, 200.0),
+    param_key="early_boost_rounds",
+    param_values=_PARAM_VALUES,
+)
+_EARLY_BOOST_MULTS = _load_float_list(
+    "NEUROPOKER_EARLY_BOOST_MULTS",
+    2,
+    (1.4, 1.25),
+    param_key="early_boost_mults",
+    param_values=_PARAM_VALUES,
+)
+
+# Desperate policy thresholds
+_DESPERATE_NUT_THRESHOLD = _load_float_list(
+    "NEUROPOKER_DESPERATE_NUT_THRESHOLD",
+    1,
+    (0.72,),
+    param_key="desperate_nut_threshold",
+    param_values=_PARAM_VALUES,
+)[0]
+_DESPERATE_RAISE_MARGIN = _load_float_list(
+    "NEUROPOKER_DESPERATE_RAISE_MARGIN",
+    1,
+    (0.10,),
+    param_key="desperate_raise_margin",
+    param_values=_PARAM_VALUES,
+)[0]
+_DESPERATE_CALL_PENALTY = _load_float_list(
+    "NEUROPOKER_DESPERATE_CALL_PENALTY",
+    1,
+    (0.08,),
+    param_key="desperate_call_penalty",
     param_values=_PARAM_VALUES,
 )[0]
 
@@ -956,7 +1125,7 @@ def _cap_raise_for_lock_defense(player: PlayerView, raise_amount: int) -> int:
 def _is_desperate(player: PlayerView) -> bool:
     """
     Check if we're in a desperate state where opponent can lock the win
-    by folding. In this state, we need high-variance aggressive play.
+    by folding. In this state, we play tighter to avoid losing chips.
     """
     if not _ENABLE_LOCK_WIN:
         return False
@@ -977,6 +1146,31 @@ def _is_desperate(player: PlayerView) -> bool:
     return opponent_bankroll > opp_future_loss
 
 
+def _is_near_desperate(player: PlayerView) -> bool:
+    """
+    Check if we're approaching a desperate state - opponent is close to
+    being able to lock. In this state, we should play more cautiously.
+    """
+    if not _ENABLE_LOCK_WIN:
+        return False
+    round_num = getattr(player, "round_num", 0)
+    if round_num <= 0:
+        return False
+    hero_bankroll = getattr(player.hero, "bankroll", 0)
+    if hero_bankroll >= -5:
+        return False  # We're ahead or nearly even
+
+    # Check how close opponent is to lock threshold
+    rounds_left = max(0, NUM_ROUNDS - round_num)
+    opp_starts_bb = not getattr(player.hero, "blind", False)
+    opp_future_loss = _blind_loss_for_rounds(rounds_left, opp_starts_bb)
+    opponent_bankroll = -hero_bankroll
+    
+    # Opponent is "near lock" if they're within 10 chips of locking
+    lock_threshold = opp_future_loss
+    return opponent_bankroll > lock_threshold - 10
+
+
 def play(bot):
     """
     Strategy entry point called by player.py.
@@ -993,8 +1187,17 @@ def play(bot):
         print("locking win")
         return LockWinPolicy.play(bot)
 
-    # Desperate mode: if opponent can lock, rely on fold-blocking logic
-    # (no separate policy; _avoid_lock_win_fold prevents giving opponent win-lock)
+    # Defensive mode: if opponent can lock but hasn't, play tight
+    if _is_desperate(bot):
+        from strategies.lockwin import DesperatePolicy
+        print("DEFENSIVE MODE - opponent can lock")
+        return DesperatePolicy.play(bot)
+    
+    # Near-desperate: flag for tighter play in normal policies
+    if _is_near_desperate(bot):
+        bot.hero.near_desperate = True
+    else:
+        bot.hero.near_desperate = False
 
     policy_class = _select_round_policy(bot)
     if not policy_class and bot.street <= 0:
@@ -1106,6 +1309,80 @@ def _call_margin_by_street(street: int) -> float:
     if street <= 4:
         return _CALL_MARGIN_BY_STREET[2]
     return _CALL_MARGIN_BY_STREET[3]
+
+
+def _lead_protection_adjustment(player, pot_total: int = 0) -> float:
+    """
+    Return an adjustment to tighten play when protecting a lead.
+    Positive values make raising/calling harder (more conservative).
+    Uses tunable stepwise function with pot-relative modifier.
+    """
+    if not _ENABLE_LOCK_WIN:
+        return 0.0
+    
+    hero_bankroll = getattr(player.hero, "bankroll", 0)
+    if hero_bankroll <= 0:
+        return 0.0  # Not ahead, no protection needed
+    
+    # Calculate how close we are to win-lock as a percentage
+    remaining = _remaining_fold_loss(player)
+    if remaining <= 0:
+        return _LEAD_PROT_ADJUSTMENTS[3]  # Already at lock, maximum tightness
+    
+    # Progress: 0% = no lead, 100% = can lock
+    progress = hero_bankroll / remaining
+    
+    # Find the applicable tier using tunable thresholds
+    base_adjustment = 0.0
+    if progress >= 1.0:
+        base_adjustment = _LEAD_PROT_ADJUSTMENTS[3]
+    elif progress >= _LEAD_PROT_THRESHOLDS[3]:
+        base_adjustment = _LEAD_PROT_ADJUSTMENTS[3]
+    elif progress >= _LEAD_PROT_THRESHOLDS[2]:
+        base_adjustment = _LEAD_PROT_ADJUSTMENTS[2]
+    elif progress >= _LEAD_PROT_THRESHOLDS[1]:
+        base_adjustment = _LEAD_PROT_ADJUSTMENTS[1]
+    elif progress >= _LEAD_PROT_THRESHOLDS[0]:
+        base_adjustment = _LEAD_PROT_ADJUSTMENTS[0]
+    
+    # Pot-relative modifier: protect more when pot is large relative to remaining loss
+    if base_adjustment > 0 and pot_total > 0 and _LEAD_PROT_POT_FACTOR > 0:
+        pot_ratio = min(1.0, pot_total / max(1, remaining))
+        base_adjustment *= (1.0 + pot_ratio * _LEAD_PROT_POT_FACTOR)
+    
+    return base_adjustment
+
+
+def _lead_protection_size_mult(player) -> float:
+    """
+    Return a bet size multiplier when protecting a lead.
+    Values < 1.0 reduce bet sizes to risk less chips.
+    """
+    if not _ENABLE_LOCK_WIN:
+        return 1.0
+    
+    hero_bankroll = getattr(player.hero, "bankroll", 0)
+    if hero_bankroll <= 0:
+        return 1.0
+    
+    remaining = _remaining_fold_loss(player)
+    if remaining <= 0:
+        return _LEAD_PROT_SIZE_MULTS[3]
+    
+    progress = hero_bankroll / remaining
+    
+    if progress >= 1.0:
+        return _LEAD_PROT_SIZE_MULTS[3]
+    elif progress >= _LEAD_PROT_THRESHOLDS[3]:
+        return _LEAD_PROT_SIZE_MULTS[3]
+    elif progress >= _LEAD_PROT_THRESHOLDS[2]:
+        return _LEAD_PROT_SIZE_MULTS[2]
+    elif progress >= _LEAD_PROT_THRESHOLDS[1]:
+        return _LEAD_PROT_SIZE_MULTS[1]
+    elif progress >= _LEAD_PROT_THRESHOLDS[0]:
+        return _LEAD_PROT_SIZE_MULTS[0]
+    
+    return 1.0
 
 
 def _fold_bias_by_street(street: int) -> float:
@@ -1242,7 +1519,8 @@ def _preflop_open_decision(
             raise_prob *= 0.5
         if raise_prob > 0 and roll < raise_prob:
             _set_preflop_debug(player, bucket, roll)
-            target = _raise_size(pot_total, min_raise, max_raise, equity)
+            value_mult = _value_extraction_multiplier(player)
+            target = _raise_size(pot_total, min_raise, max_raise, equity, value_mult=value_mult)
             if target > 0:
                 return RaiseAction(target)
 
@@ -1418,7 +1696,55 @@ def _opponent_range_bias(street: int) -> float:
     return 0.0
 
 
-def _raise_size(pot_total: int, min_raise: int, max_raise: int, equity: float, bluff: bool = False) -> int:
+def _opponent_is_passive(street: int) -> bool:
+    """Check if opponent has been passive (low raise rate) on this street."""
+    bucket = _OPPONENT_RANGE_MODEL["by_street"].get(street)
+    if not bucket:
+        return False
+    total = bucket.get("total", 0.0)
+    raises = bucket.get("raises", 0.0)
+    if total < 8:
+        return False
+    return (raises / total) < _OPP_PASSIVE_THRESHOLD
+
+
+def _opponent_is_calling_station(street: int) -> bool:
+    """Check if opponent calls frequently but rarely raises."""
+    bucket = _OPPONENT_RANGE_MODEL["by_street"].get(street)
+    if not bucket:
+        return False
+    total = bucket.get("total", 0.0)
+    calls = bucket.get("calls", 0.0)
+    folds = bucket.get("folds", 0.0)
+    if total < 10:
+        return False
+    call_rate = calls / total
+    fold_rate = folds / total
+    return call_rate > _OPP_STATION_CALL_RATE and fold_rate < _OPP_STATION_FOLD_RATE
+
+
+def _value_extraction_multiplier(player) -> float:
+    """
+    Return a multiplier for raise sizing when we have a strong hand.
+    Combines lead protection (reduces bet size) with opponent exploitation (increases against passive).
+    """
+    street = getattr(player, "street", 0)
+    
+    # Start with opponent exploitation using tunable multipliers
+    opp_mult = 1.0
+    if _opponent_is_calling_station(street):
+        opp_mult = _OPP_STATION_VALUE_MULT
+    elif _opponent_is_passive(street):
+        opp_mult = _OPP_PASSIVE_VALUE_MULT
+    
+    # Lead protection multiplier using the stepwise function
+    lead_mult = _lead_protection_size_mult(player)
+    
+    # Combine: exploit weak opponents but still protect lead
+    return opp_mult * lead_mult
+
+
+def _raise_size(pot_total: int, min_raise: int, max_raise: int, equity: float, bluff: bool = False, value_mult: float = 1.0) -> int:
     if max_raise <= 0:
         return 0
     if bluff:
@@ -1427,9 +1753,9 @@ def _raise_size(pot_total: int, min_raise: int, max_raise: int, equity: float, b
         return min(target, max_raise)
     strong_frac, medium_frac, light_frac = _RAISE_SIZE_FRACTIONS
     if equity >= 0.7:
-        target = int(pot_total * strong_frac)
+        target = int(pot_total * strong_frac * value_mult)
     elif equity >= 0.6:
-        target = int(pot_total * medium_frac)
+        target = int(pot_total * medium_frac * value_mult)
     else:
         target = int(pot_total * light_frac)
     target = max(min_raise, target)
@@ -1670,6 +1996,11 @@ def _board_is_flushy(board_tuple: Tuple[int, ...]) -> bool:
 
 def _equity_budget(player: PlayerView) -> Tuple[int, float, int]:
     street = player.street
+    round_num = getattr(player, "round_num", 0)
+    hero_bankroll = getattr(player.hero, "bankroll", 0)
+    game_clock = getattr(player, "game_clock", None)
+    
+    # Base budget by street
     if street <= 0:
         samples = 60
         max_seconds = 0.012
@@ -1683,18 +2014,26 @@ def _equity_budget(player: PlayerView) -> Tuple[int, float, int]:
         max_seconds = 0.020
         discard_samples = 12
 
-    # Increase sampling when behind on bankroll or in late rounds (non-compounding)
-    round_num = getattr(player, "round_num", 0)
-    hero_bankroll = getattr(player.hero, "bankroll", 0)
-    game_clock = getattr(player, "game_clock", None)
+    # Early-round boost using tunable parameters
+    early_r1, early_r2 = _EARLY_BOOST_ROUNDS
+    early_m1, early_m2 = _EARLY_BOOST_MULTS
+    if round_num <= early_r1 and (game_clock is None or game_clock > 40):
+        samples = int(samples * early_m1)
+        max_seconds *= (early_m1 * 0.9)  # Slightly less time boost
+        discard_samples = int(discard_samples * (1.0 + (early_m1 - 1.0) * 0.6))
+    elif round_num <= early_r2 and (game_clock is None or game_clock > 35):
+        samples = int(samples * early_m2)
+        max_seconds *= (early_m2 * 0.95)
+        discard_samples = int(discard_samples * (1.0 + (early_m2 - 1.0) * 0.5))
     
-    # Only scale up if we have ample time remaining
+    # Scale up when behind (need to catch up) - only if time permits
     if game_clock is None or game_clock > 30:
         scale = 1.0
         if hero_bankroll < -50:
             scale = max(scale, 1.3)
         elif hero_bankroll < -20:
             scale = max(scale, 1.15)
+        # Late rounds: opponent may be exploitable, invest more
         if round_num > 750:
             scale = max(scale, 1.25)
         elif round_num > 500:
@@ -1702,6 +2041,7 @@ def _equity_budget(player: PlayerView) -> Tuple[int, float, int]:
         samples = int(samples * scale)
         discard_samples = int(discard_samples * min(1.15, scale))
 
+    # Time pressure: reduce budget when clock is low
     if game_clock is not None and game_clock < 20:
         samples = max(40, samples // 2)
         max_seconds = max(0.008, max_seconds * 0.5)
