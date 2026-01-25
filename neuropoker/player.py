@@ -6,6 +6,7 @@ from skeleton.states import GameState, TerminalState, RoundState
 from skeleton.states import NUM_ROUNDS, STARTING_STACK, BIG_BLIND, SMALL_BLIND
 from skeleton.bot import Bot
 from skeleton.runner import parse_args, run_bot
+from strategies.lockwin import DesperatePolicy
 
 import os
 import random
@@ -42,6 +43,7 @@ class Player(Bot):
         '''
         self.hero = ActorView()
         self.villain = ActorView()
+        self.hero.enable_desperate = True
         self._logged_start = False
         self._last_board_len = 0
         self._pending_hero_discard = None
@@ -165,6 +167,10 @@ class Player(Bot):
                 strategy.record_inferred_range(1.0)
         if self.round_num % 100 == 1:
             self._log(f"round_over={self.round_num} delta={self.hero.delta}")
+
+        if self.hero.policy_class == DesperatePolicy and self.hero.delta < 0:
+            self.hero.enable_desperate = False
+
 
     def get_action(self, game_state, round_state, active):
         '''

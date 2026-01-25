@@ -521,7 +521,7 @@ _LEAD_PROT_ADJUSTMENTS = _load_float_list(
 _LEAD_PROT_SIZE_MULTS = _load_float_list(
     "NEUROPOKER_LEAD_PROT_SIZE_MULTS",
     4,
-    (0.9, 0.8, 0.7, 0.6),
+    (0.95, 0.9, 0.85, 0.8),
     param_key="lead_prot_size_mults",
     param_values=_PARAM_VALUES,
 )
@@ -644,6 +644,7 @@ class ActorView:
     legal_actions: Iterable[object]
     hand: Sequence[str]
     pip: int
+    enable_desperate: True
     stack: int
     continue_cost: int
     contribution: int
@@ -1025,6 +1026,8 @@ def _opponent_can_lock_after_fold(player: PlayerView) -> bool:
 
 def _avoid_lock_win_fold(player: PlayerView, action):
     from skeleton.actions import CallAction, CheckAction, FoldAction
+    if not player.hero.enable_desperate:
+        return action
 
     if not isinstance(action, FoldAction):
         return action
@@ -1127,11 +1130,7 @@ def _is_desperate(player: PlayerView) -> bool:
     Check if we're in a desperate state where opponent can lock the win
     by folding. In this state, we play tighter to avoid losing chips.
     """
-    if not _ENABLE_LOCK_WIN:
-        return False
     round_num = getattr(player, "round_num", 0)
-    if round_num <= 0:
-        return False
     hero_bankroll = getattr(player.hero, "bankroll", 0)
     if hero_bankroll >= 0:
         return False  # We're ahead or even, not desperate
@@ -1140,7 +1139,7 @@ def _is_desperate(player: PlayerView) -> bool:
     rounds_left = max(0, NUM_ROUNDS - round_num)
     opp_starts_bb = not getattr(player.hero, "blind", False)
     opp_future_loss = _blind_loss_for_rounds(rounds_left, opp_starts_bb)
-    opponent_bankroll = -hero_bankroll
+    opponent_bankroll = -hero_bankroll + player.hero.pot_total
 
     # Opponent can lock if their bankroll > their future blind losses
     return opponent_bankroll > opp_future_loss
@@ -1165,7 +1164,7 @@ def _is_near_desperate(player: PlayerView) -> bool:
     opp_starts_bb = not getattr(player.hero, "blind", False)
     opp_future_loss = _blind_loss_for_rounds(rounds_left, opp_starts_bb)
     opponent_bankroll = -hero_bankroll
-    
+
     # Opponent is "near lock" if they're within 10 chips of locking
     lock_threshold = opp_future_loss
     return opponent_bankroll > lock_threshold - 10
@@ -1180,7 +1179,7 @@ def play(bot):
     """
     # Reset the action timer for hard 9-second cap in stats.py
     stats._reset_action_timer()
-    
+
     # Win-lock: if we can lock the win, do it
     if _should_lock_win(bot):
         from strategies.lockwin import LockWinPolicy
@@ -1188,11 +1187,11 @@ def play(bot):
         return LockWinPolicy.play(bot)
 
     # Defensive mode: if opponent can lock but hasn't, play tight
-    if _is_desperate(bot):
+    if _is_desperate(bot) and bot.hero.enable_desperate:
         from strategies.lockwin import DesperatePolicy
         print("DEFENSIVE MODE - opponent can lock")
         return DesperatePolicy.play(bot)
-    
+
     # Near-desperate: flag for tighter play in normal policies
     if _is_near_desperate(bot):
         bot.hero.near_desperate = True
@@ -1319,19 +1318,19 @@ def _lead_protection_adjustment(player, pot_total: int = 0) -> float:
     """
     if not _ENABLE_LOCK_WIN:
         return 0.0
-    
+
     hero_bankroll = getattr(player.hero, "bankroll", 0)
     if hero_bankroll <= 0:
         return 0.0  # Not ahead, no protection needed
-    
+
     # Calculate how close we are to win-lock as a percentage
     remaining = _remaining_fold_loss(player)
     if remaining <= 0:
         return _LEAD_PROT_ADJUSTMENTS[3]  # Already at lock, maximum tightness
-    
+
     # Progress: 0% = no lead, 100% = can lock
     progress = hero_bankroll / remaining
-    
+
     # Find the applicable tier using tunable thresholds
     base_adjustment = 0.0
     if progress >= 1.0:
@@ -1344,12 +1343,12 @@ def _lead_protection_adjustment(player, pot_total: int = 0) -> float:
         base_adjustment = _LEAD_PROT_ADJUSTMENTS[1]
     elif progress >= _LEAD_PROT_THRESHOLDS[0]:
         base_adjustment = _LEAD_PROT_ADJUSTMENTS[0]
-    
+
     # Pot-relative modifier: protect more when pot is large relative to remaining loss
     if base_adjustment > 0 and pot_total > 0 and _LEAD_PROT_POT_FACTOR > 0:
         pot_ratio = min(1.0, pot_total / max(1, remaining))
         base_adjustment *= (1.0 + pot_ratio * _LEAD_PROT_POT_FACTOR)
-    
+
     return base_adjustment
 
 
@@ -1360,17 +1359,17 @@ def _lead_protection_size_mult(player) -> float:
     """
     if not _ENABLE_LOCK_WIN:
         return 1.0
-    
+
     hero_bankroll = getattr(player.hero, "bankroll", 0)
     if hero_bankroll <= 0:
         return 1.0
-    
+
     remaining = _remaining_fold_loss(player)
     if remaining <= 0:
         return _LEAD_PROT_SIZE_MULTS[3]
-    
+
     progress = hero_bankroll / remaining
-    
+
     if progress >= 1.0:
         return _LEAD_PROT_SIZE_MULTS[3]
     elif progress >= _LEAD_PROT_THRESHOLDS[3]:
@@ -1381,7 +1380,7 @@ def _lead_protection_size_mult(player) -> float:
         return _LEAD_PROT_SIZE_MULTS[1]
     elif progress >= _LEAD_PROT_THRESHOLDS[0]:
         return _LEAD_PROT_SIZE_MULTS[0]
-    
+
     return 1.0
 
 
@@ -1729,17 +1728,17 @@ def _value_extraction_multiplier(player) -> float:
     Combines lead protection (reduces bet size) with opponent exploitation (increases against passive).
     """
     street = getattr(player, "street", 0)
-    
+
     # Start with opponent exploitation using tunable multipliers
     opp_mult = 1.0
     if _opponent_is_calling_station(street):
         opp_mult = _OPP_STATION_VALUE_MULT
     elif _opponent_is_passive(street):
         opp_mult = _OPP_PASSIVE_VALUE_MULT
-    
+
     # Lead protection multiplier using the stepwise function
     lead_mult = _lead_protection_size_mult(player)
-    
+
     # Combine: exploit weak opponents but still protect lead
     return opp_mult * lead_mult
 
@@ -1999,7 +1998,7 @@ def _equity_budget(player: PlayerView) -> Tuple[int, float, int]:
     round_num = getattr(player, "round_num", 0)
     hero_bankroll = getattr(player.hero, "bankroll", 0)
     game_clock = getattr(player, "game_clock", None)
-    
+
     # Base budget by street
     if street <= 0:
         samples = 60
@@ -2025,7 +2024,7 @@ def _equity_budget(player: PlayerView) -> Tuple[int, float, int]:
         samples = int(samples * early_m2)
         max_seconds *= (early_m2 * 0.95)
         discard_samples = int(discard_samples * (1.0 + (early_m2 - 1.0) * 0.5))
-    
+
     # Scale up when behind (need to catch up) - only if time permits
     if game_clock is None or game_clock > 30:
         scale = 1.0
