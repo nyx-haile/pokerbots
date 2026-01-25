@@ -1,8 +1,10 @@
 from dataclasses import dataclass, field
+from functools import lru_cache
 import json
 import math
 import os
 import random
+import time
 from typing import Any, Iterable, Mapping, Optional, Sequence, Tuple, Dict, List
 
 import stats
@@ -259,7 +261,7 @@ _PREFLOP_CALL_THRESHOLDS = _load_thresholds(
 _RAISE_SIZE_FRACTIONS = _load_float_list(
     "NEUROPOKER_RAISE_SIZE_FRACTIONS",
     3,
-    (1.0, 0.5, 0.33),
+    (0.75, 0.5, 0.33),
     param_key="raise_size_fractions",
     param_values=_PARAM_VALUES,
 )
@@ -982,17 +984,17 @@ def play(bot):
     This function should read the live fields on player and return an action
     instance from skeleton.actions.
     """
+    # Reset the action timer for hard 9-second cap in stats.py
+    stats._reset_action_timer()
+    
     # Win-lock: if we can lock the win, do it
     if _should_lock_win(bot):
         from strategies.lockwin import LockWinPolicy
         print("locking win")
         return LockWinPolicy.play(bot)
 
-    # Desperate mode: if opponent can lock, play aggressively
-    if _is_desperate(bot):
-        from strategies.lockwin import DesperatePolicy
-        print("LAST RESORT. Might be my last rodeo...")
-        return DesperatePolicy.play(bot)
+    # Desperate mode: if opponent can lock, rely on fold-blocking logic
+    # (no separate policy; _avoid_lock_win_fold prevents giving opponent win-lock)
 
     policy_class = _select_round_policy(bot)
     if not policy_class and bot.street <= 0:
@@ -1039,10 +1041,7 @@ def play(bot):
 
 
 def _force_discard_if_needed(player: PlayerView, action):
-    try:
-        from skeleton.actions import DiscardAction
-    except Exception:
-        return action
+    from skeleton.actions import DiscardAction
     if isinstance(action, DiscardAction):
         return action
     legal_actions = set(player.hero.legal_actions)
@@ -1085,10 +1084,7 @@ def _maybe_set_policy(player: PlayerView):
 
 def _discard_action_required(player: PlayerView) -> bool:
     legal_actions = set(player.hero.legal_actions)
-    try:
-        from skeleton.actions import DiscardAction
-    except Exception:
-        return False
+    from skeleton.actions import DiscardAction
     return DiscardAction in legal_actions
 
 
@@ -1295,15 +1291,21 @@ def _set_preflop_debug(player: PlayerView, bucket: str, roll: float) -> None:
     setattr(player.hero, "preflop_roll", roll)
 
 
-def _board_texture_adjustments(board_cards: Sequence[str]) -> Tuple[float, float, float]:
-    if not board_cards:
+@lru_cache(maxsize=50_000)
+def _board_texture_adjustments_cached(board_tuple: Tuple[str, ...]) -> Tuple[float, float, float]:
+    if not board_tuple:
         return 0.0, 0.0, 1.0
-    board_int = stats._ensure_int_cards(list(board_cards))
-    paired = _board_is_paired(board_int)
-    flushy = _board_is_flushy(board_int)
+    board_int = stats._ensure_int_cards(list(board_tuple))
+    board_int_tuple = tuple(board_int)
+    paired = _board_is_paired(board_int_tuple)
+    flushy = _board_is_flushy(board_int_tuple)
     if paired or flushy:
         return 0.03, 0.02, 0.7
     return 0.0, 0.0, 1.0
+
+
+def _board_texture_adjustments(board_cards: Sequence[str]) -> Tuple[float, float, float]:
+    return _board_texture_adjustments_cached(tuple(board_cards))
 
 
 def _variant_adjustments(
@@ -1361,9 +1363,10 @@ def _graph_adjustments(
                 equity_bias += 0.003
             if hsuit == stats.Card.get_suit_int(bcard):
                 equity_bias += 0.002
-    if _board_is_paired(board_int):
+    board_tuple = tuple(board_int)
+    if _board_is_paired(board_tuple):
         equity_bias += 0.004
-    if _board_is_flushy(board_int):
+    if _board_is_flushy(board_tuple):
         equity_bias += 0.004
     return min(0.02, equity_bias), 0.0, 0.0
 
@@ -1609,17 +1612,19 @@ def _should_bluff(street: int, board_cards: Sequence[str], allow_bluff: bool = T
     if street < 3:
         return False
     board_int = stats._ensure_int_cards(list(board_cards))
-    if _board_is_paired(board_int):
+    board_tuple = tuple(board_int)
+    if _board_is_paired(board_tuple):
         return False
-    if _board_is_flushy(board_int):
+    if _board_is_flushy(board_tuple):
         return False
     return random.random() < 0.006
 
 
-def _fast_discard_index(hero_hand: Sequence[str]) -> int:
-    if not hero_hand:
+@lru_cache(maxsize=10_000)
+def _fast_discard_index_cached(hero_hand_tuple: Tuple[str, ...]) -> int:
+    if not hero_hand_tuple:
         return 0
-    cards_int = stats._ensure_int_cards(list(hero_hand))
+    cards_int = stats._ensure_int_cards(list(hero_hand_tuple))
     ranks = [stats.Card.get_rank_int(card) for card in cards_int]
     suits = [stats.Card.get_suit_int(card) for card in cards_int]
     scores = []
@@ -1644,13 +1649,19 @@ def _fast_discard_index(hero_hand: Sequence[str]) -> int:
     return discard
 
 
-def _board_is_paired(board_int: Sequence[int]) -> bool:
-    ranks = [stats.Card.get_rank_int(card) for card in board_int]
+def _fast_discard_index(hero_hand: Sequence[str]) -> int:
+    return _fast_discard_index_cached(tuple(hero_hand))
+
+
+@lru_cache(maxsize=50_000)
+def _board_is_paired(board_tuple: Tuple[int, ...]) -> bool:
+    ranks = [stats.Card.get_rank_int(card) for card in board_tuple]
     return len(set(ranks)) < len(ranks)
 
 
-def _board_is_flushy(board_int: Sequence[int]) -> bool:
-    suits = [stats.Card.get_suit_int(card) for card in board_int]
+@lru_cache(maxsize=50_000)
+def _board_is_flushy(board_tuple: Tuple[int, ...]) -> bool:
+    suits = [stats.Card.get_suit_int(card) for card in board_tuple]
     for suit in set(suits):
         if suits.count(suit) >= 3:
             return True
@@ -1672,7 +1683,25 @@ def _equity_budget(player: PlayerView) -> Tuple[int, float, int]:
         max_seconds = 0.020
         discard_samples = 12
 
+    # Increase sampling when behind on bankroll or in late rounds (non-compounding)
+    round_num = getattr(player, "round_num", 0)
+    hero_bankroll = getattr(player.hero, "bankroll", 0)
     game_clock = getattr(player, "game_clock", None)
+    
+    # Only scale up if we have ample time remaining
+    if game_clock is None or game_clock > 30:
+        scale = 1.0
+        if hero_bankroll < -50:
+            scale = max(scale, 1.3)
+        elif hero_bankroll < -20:
+            scale = max(scale, 1.15)
+        if round_num > 750:
+            scale = max(scale, 1.25)
+        elif round_num > 500:
+            scale = max(scale, 1.1)
+        samples = int(samples * scale)
+        discard_samples = int(discard_samples * min(1.15, scale))
+
     if game_clock is not None and game_clock < 20:
         samples = max(40, samples // 2)
         max_seconds = max(0.008, max_seconds * 0.5)

@@ -10,7 +10,6 @@ from skeleton.runner import parse_args, run_bot
 import os
 import random
 import sys
-import traceback
 
 _SINGLE_CORE_ENV = {
     "OMP_NUM_THREADS": "1",
@@ -252,16 +251,10 @@ class Player(Bot):
         if not self._logged_start:
             self._log(f"first_action street={self.street} legal={self.hero.legal_actions}")
             self._logged_start = True
-        try:
-            action = strategy.play(self)
-        except Exception:
-            action = FoldAction()
+        action = strategy.play(self)
 
         if isinstance(action, DiscardAction):
-            try:
-                self._pending_hero_discard = self.hero.hand[action.card]
-            except Exception:
-                self._pending_hero_discard = None
+            self._pending_hero_discard = self.hero.hand[action.card]
         if self.street <= 0:
             bucket = getattr(self.hero, "preflop_bucket", "n/a")
             roll = getattr(self.hero, "preflop_roll", None)
