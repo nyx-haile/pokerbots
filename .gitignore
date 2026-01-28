@@ -6,3 +6,6 @@ __pycache__/
 *.pyc
 baselines/
 *.prof
+neuropoker-pokerstove/
+neuropoker-7652c49/
+

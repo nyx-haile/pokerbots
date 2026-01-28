@@ -2,7 +2,7 @@ from skeleton.actions import CallAction, CheckAction, DiscardAction, FoldAction,
 
 import lumberjack
 import stats
-import strategy as core
+from strategy import policy_api as core
 
 
 class BluffPolicy:

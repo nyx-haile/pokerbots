@@ -2,7 +2,7 @@ from skeleton.actions import CallAction, CheckAction, DiscardAction, FoldAction,
 
 import lumberjack
 import stats
-import strategy as core
+from strategy import policy_api as core
 
 
 class TightPolicy:
@@ -68,6 +68,7 @@ class TightPolicy:
                 max_seconds,
                 discard_samples,
             )
+            force_full_equity = core._is_large_raise(player, pot_total)
             quick_equity = stats.estimate_equity(
                 hero_hand,
                 board_cards,
@@ -103,6 +104,9 @@ class TightPolicy:
         lead_adj = core._lead_protection_adjustment(player, pot_total)
         raise_margin += lead_adj
         call_margin -= lead_adj  # Harder to call when protecting lead
+        traj_raise_adj, traj_call_adj = core._trajectory_lock_adjustment(player)
+        raise_margin += traj_raise_adj
+        call_margin += traj_call_adj
 
         if core._USE_RANDOM_POLICY:
             policy_bias = core._policy_bias(player, equity, pot_odds)
@@ -145,7 +149,15 @@ class TightPolicy:
 
         if player.street > 0:
             raise_threshold = pot_odds + raise_margin
-            if quick_equity > raise_threshold + 0.12:
+            if force_full_equity:
+                equity = stats.estimate_equity(
+                    hero_hand,
+                    board_cards,
+                    samples=samples,
+                    max_seconds=max_seconds,
+                    discard_samples=discard_samples,
+                )
+            elif quick_equity > raise_threshold + 0.12:
                 equity = quick_equity
             elif quick_equity < pot_odds - call_margin - 0.12:
                 equity = quick_equity
@@ -165,7 +177,7 @@ class TightPolicy:
             raise_threshold = pot_odds + raise_margin
             raise_cap = max(4, int(pot_total // 2 * raise_cap_mult))
             fold_rate = core.fold_equity_estimate(None, min_raise, player.street, pot_total)
-            if min_raise > raise_cap or min_raise > player.hero.stack // 2:
+            if min_raise > raise_cap or min_raise > player.hero.stack // 3:
                 pass
             elif equity >= core._NUT_RAISE_EQUITY and min_raise > 0:
                 target = core._nut_raise_target(min_raise, max_raise)

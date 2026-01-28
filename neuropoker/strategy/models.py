@@ -1,0 +1,680 @@
+"""Opponent + policy modeling helpers extracted from strategy core."""
+
+import math
+import os
+import random
+from typing import Optional, Sequence, List
+
+import stats
+
+from .math import (
+    _BLUFF_DISABLE_BEHIND,
+    _BLUFF_WEAKNESS_THRESHOLD,
+    _PARAM_VALUES,
+    _PRESSURE_FOLDRATE_MIN,
+    _PRESSURE_EQUITY_THRESHOLD,
+    _TIGHT_EQUITY_THRESHOLD,
+    _TIGHT_FOLD_LR,
+    _load_float_list,
+    _board_is_flushy,
+    _board_is_paired,
+    _board_texture_adjustments,
+    _lead_protection_size_mult,
+)
+
+_USE_RANDOM_POLICY = os.environ.get("NEUROPOKER_USE_RANDOM_POLICY", "0") == "1"
+_RANDOM_POLICY_SEED = int(os.environ.get("NEUROPOKER_RANDOM_POLICY_SEED", "7") or "7")
+_RANDOM_POLICY_LR = 0.02
+_RANDOM_POLICY_HIDDEN = 16
+_LAST_HIDDEN = None
+
+_INFO_PENALTY = 0.05
+_INFO_PENALTY_MIN = 0.0
+_INFO_PENALTY_MAX = 0.12
+_DISCARD_MODEL_DECAY = 0.995
+_OPPONENT_DISCARD_MODEL = {
+    "rank_counts": [0] * 13,
+    "suit_counts": [0] * 4,
+    "total": 0,
+}
+_BET_MODEL_DECAY = 0.99
+_OPPONENT_BET_MODEL = {
+    "by_street": {},
+}
+_RANGE_MODEL_DECAY = 0.99
+_OPPONENT_RANGE_MODEL = {
+    "by_street": {},
+    "showdowns": {"wins": 0.0, "losses": 0.0},
+    "inferred": {"sum": 0.0, "total": 0.0},
+}
+
+_OPP_PASSIVE_THRESHOLD = _load_float_list(
+    "NEUROPOKER_OPP_PASSIVE_THRESHOLD",
+    1,
+    (0.2,),
+    param_key="opp_passive_threshold",
+    param_values=_PARAM_VALUES,
+)[0]
+_OPP_STATION_CALL_RATE = _load_float_list(
+    "NEUROPOKER_OPP_STATION_CALL_RATE",
+    1,
+    (0.6,),
+    param_key="opp_station_call_rate",
+    param_values=_PARAM_VALUES,
+)[0]
+_OPP_STATION_FOLD_RATE = _load_float_list(
+    "NEUROPOKER_OPP_STATION_FOLD_RATE",
+    1,
+    (0.15,),
+    param_key="opp_station_fold_rate",
+    param_values=_PARAM_VALUES,
+)[0]
+_OPP_PASSIVE_VALUE_MULT = _load_float_list(
+    "NEUROPOKER_OPP_PASSIVE_VALUE_MULT",
+    1,
+    (1.2,),
+    param_key="opp_passive_value_mult",
+    param_values=_PARAM_VALUES,
+)[0]
+_OPP_STATION_VALUE_MULT = _load_float_list(
+    "NEUROPOKER_OPP_STATION_VALUE_MULT",
+    1,
+    (1.4,),
+    param_key="opp_station_value_mult",
+    param_values=_PARAM_VALUES,
+)[0]
+
+_POLICY_LR = float(os.environ.get("NEUROPOKER_POLICY_LR", "0.15") or "0.15")
+_POLICY_EPSILON = float(os.environ.get("NEUROPOKER_POLICY_EPSILON", "0.15") or "0.15")
+_POLICY_STATS = {}
+
+
+class RandomFeaturePolicy:
+    """Random-feature policy with a linear readout."""
+
+    def __init__(self, seed: int = 0, hidden_dim: int = _RANDOM_POLICY_HIDDEN):
+        rng = random.Random(seed)
+        self.hidden_dim = hidden_dim
+        self.proj = [[rng.uniform(-1.0, 1.0) for _ in range(8)] for _ in range(hidden_dim)]
+        self.weights = [rng.uniform(-0.05, 0.05) for _ in range(hidden_dim)]
+
+    def forward(self, features: List[float]) -> List[float]:
+        hidden = []
+        for row in self.proj:
+            dot = 0.0
+            for weight, feat in zip(row, features):
+                dot += weight * feat
+            hidden.append(math.tanh(dot))
+        return hidden
+
+    def score(self, hidden: List[float]) -> float:
+        total = 0.0
+        for weight, feat in zip(self.weights, hidden):
+            total += weight * feat
+        return total
+
+    def update(self, hidden: List[float], reward: float, lr: float) -> None:
+        for idx, feat in enumerate(hidden):
+            self.weights[idx] += lr * reward * feat
+
+
+_RANDOM_POLICY = RandomFeaturePolicy(seed=_RANDOM_POLICY_SEED)
+
+
+def update_policy_from_round(player) -> None:
+    policy_class = getattr(player.hero, "policy_class", None)
+    if not policy_class:
+        return
+    _ensure_policy_stats(policy_class)
+    policy_key = _policy_key(policy_class)
+    if policy_key not in _POLICY_STATS:
+        return
+    delta = getattr(player.hero, "delta", 0)
+    reward = max(-1.0, min(1.0, delta / 100.0))
+    lr = _POLICY_LR
+    bluff_cls, _ = _policy_classes()
+    if policy_class is bluff_cls:
+        call_rate = _opponent_call_rate(getattr(player, "street", None))
+        if call_rate > 0.0:
+            lr *= max(0.1, 1.0 - min(0.8, call_rate))
+    stats_bucket = _POLICY_STATS[policy_key]
+    stats_bucket["avg"] += lr * (reward - stats_bucket["avg"])
+    stats_bucket["count"] += 1.0
+    stats_bucket["total_delta"] += float(delta)
+    stats_bucket["total_reward"] += float(reward)
+    street = getattr(player, "street", None)
+    if street is not None:
+        street_bucket = stats_bucket["per_street"].setdefault(
+            int(street),
+            {"count": 0.0, "total_delta": 0.0, "total_reward": 0.0},
+        )
+        street_bucket["count"] += 1.0
+        street_bucket["total_delta"] += float(delta)
+        street_bucket["total_reward"] += float(reward)
+
+
+def _policy_key(policy_class) -> str:
+    return getattr(policy_class, "__name__", str(policy_class))
+
+
+def _policy_classes():
+    import policies.bluff as bluff_policy
+    import policies.tight as tight_policy
+
+    return (bluff_policy.BluffPolicy, tight_policy.TightPolicy)
+
+
+def _ensure_policy_stats(policy_class=None) -> None:
+    if policy_class is not None:
+        key = _policy_key(policy_class)
+        _POLICY_STATS.setdefault(
+            key,
+            {
+                "avg": 0.0,
+                "count": 0.0,
+                "total_delta": 0.0,
+                "total_reward": 0.0,
+                "per_street": {},
+            },
+        )
+        return
+    for cls in _policy_classes():
+        key = _policy_key(cls)
+        _POLICY_STATS.setdefault(
+            key,
+            {
+                "avg": 0.0,
+                "count": 0.0,
+                "total_delta": 0.0,
+                "total_reward": 0.0,
+                "per_street": {},
+            },
+        )
+
+
+def _select_round_policy(player):
+    policy_class = getattr(player.hero, "policy_class", None)
+    policy_round = getattr(player.hero, "policy_round", None)
+    round_num = getattr(player, "round_num", 0)
+    if policy_class in _policy_classes() and policy_round == round_num:
+        return policy_class
+    return None
+
+
+def _opponent_weakness_score(player) -> float:
+    fold_rate = _opponent_fold_rate(player.street, None)
+    range_bucket = _OPPONENT_RANGE_MODEL["by_street"].get(player.street, {})
+    total = range_bucket.get("total", 0.0)
+    raises = range_bucket.get("raises", 0.0)
+    raise_rate = raises / total if total >= 5 else None
+    inferred = _OPPONENT_RANGE_MODEL["inferred"]
+    inferred_avg = inferred["sum"] / inferred["total"] if inferred["total"] >= 5 else None
+    score = 0.0
+    if fold_rate > 0.0:
+        score += max(0.0, fold_rate - 0.25)
+    if raise_rate is not None:
+        score += max(0.0, 0.3 - raise_rate)
+    if inferred_avg is not None:
+        score += max(0.0, 0.45 - inferred_avg)
+    return score
+
+
+def _opponent_bluff_adjustment(player) -> float:
+    fold_rate = _opponent_fold_rate(player.street, None)
+    range_bucket = _OPPONENT_RANGE_MODEL["by_street"].get(player.street, {})
+    total = range_bucket.get("total", 0.0)
+    raises = range_bucket.get("raises", 0.0)
+    raise_rate = raises / total if total >= 5 else None
+    bias = 0.0
+    if fold_rate >= 0.45:
+        bias -= 0.04
+    elif 0.0 < fold_rate <= 0.2:
+        bias += 0.04
+    if raise_rate is not None and raise_rate >= 0.45:
+        bias += 0.02
+    return bias
+
+
+def _bluff_threshold(player) -> float:
+    _ensure_policy_stats()
+    bluff_cls, tight_cls = _policy_classes()
+    bluff_avg = _POLICY_STATS[_policy_key(bluff_cls)]["avg"]
+    tight_avg = _POLICY_STATS[_policy_key(tight_cls)]["avg"]
+    bias = max(-0.05, min(0.05, (bluff_avg - tight_avg) * 0.2))
+    opponent_bias = _opponent_bluff_adjustment(player)
+    return max(0.0, _BLUFF_WEAKNESS_THRESHOLD - bias + opponent_bias)
+
+
+def _tight_equity_threshold(player) -> float:
+    base = _TIGHT_EQUITY_THRESHOLD
+    fold_rate = _opponent_fold_rate(player.street, None)
+    if fold_rate <= 0.0 or _TIGHT_FOLD_LR <= 0.0:
+        return base
+    adjustment = fold_rate * _TIGHT_FOLD_LR
+    return max(0.0, base - adjustment)
+
+
+def _choose_policy_for_round(player, equity: float):
+    from .math import pot_odds_to_call
+
+    bluff_cls, tight_cls = _policy_classes()
+    if equity >= _tight_equity_threshold(player):
+        return tight_cls
+    pot_total = max(1, getattr(player.hero, "pot_total", 1))
+    continue_cost = getattr(player.hero, "continue_cost", 0)
+    pot_odds = pot_odds_to_call(continue_cost, pot_total)
+    if equity >= pot_odds:
+        return tight_cls
+    weakness = _opponent_weakness_score(player)
+    if weakness >= _bluff_threshold(player) and _bluff_allowed(player):
+        board_cards = list(getattr(player, "community", []))
+        texture_raise, _, _ = _board_texture_adjustments(board_cards)
+        if texture_raise > 0.0:
+            return None
+        fold_rate = _opponent_fold_rate(player.street, None)
+        if fold_rate <= 0.0:
+            return None
+        if fold_rate < _PRESSURE_FOLDRATE_MIN:
+            return None
+        return bluff_cls
+    return None
+
+
+def _bluff_allowed(player) -> bool:
+    if _BLUFF_DISABLE_BEHIND <= 0:
+        return True
+    bankroll = getattr(player.hero, "bankroll", 0)
+    return bankroll >= -_BLUFF_DISABLE_BEHIND
+
+
+def _opponent_discard_bias(street: int) -> float:
+    if street <= 0:
+        return 0.0
+    total = _OPPONENT_DISCARD_MODEL["total"]
+    if total <= 0:
+        return 0.0
+    rank_counts = _OPPONENT_DISCARD_MODEL["rank_counts"]
+    avg_rank = sum(idx * count for idx, count in enumerate(rank_counts)) / total
+    strength = min(1.0, max(0.0, avg_rank / 12.0))
+    return min(0.04, 0.02 * (strength - 0.5))
+
+
+def _opponent_range_bias(street: int) -> float:
+    if street <= 0:
+        return 0.0
+    inferred = _OPPONENT_RANGE_MODEL["inferred"]
+    if inferred["total"] <= 0:
+        return 0.0
+    avg = inferred["sum"] / inferred["total"]
+    return max(-0.04, min(0.04, (avg - 0.5) * 0.08))
+
+
+def _opponent_is_passive(street: int) -> bool:
+    fold_rate = _opponent_fold_rate(street, None)
+    if fold_rate <= 0.0:
+        return False
+    return fold_rate >= _OPP_PASSIVE_THRESHOLD
+
+
+def _opponent_is_calling_station(street: int) -> bool:
+    fold_rate = _opponent_fold_rate(street, None)
+    call_rate = _opponent_call_rate(street)
+    if fold_rate <= 0.0:
+        return False
+    if call_rate <= 0.0:
+        return False
+    return fold_rate <= _OPP_STATION_FOLD_RATE and call_rate >= _OPP_STATION_CALL_RATE
+
+
+def _value_extraction_multiplier(player) -> float:
+    opp_mult = 1.0
+    street = getattr(player, "street", 0)
+    if _opponent_is_calling_station(street):
+        opp_mult = _OPP_STATION_VALUE_MULT
+    elif _opponent_is_passive(street):
+        opp_mult = _OPP_PASSIVE_VALUE_MULT
+    lead_mult = _lead_protection_size_mult(player)
+    return opp_mult * lead_mult
+
+
+def _opponent_fold_rate(street: int, bucket_key: Optional[str]) -> float:
+    bucket = _OPPONENT_BET_MODEL["by_street"].get(street)
+    if not bucket:
+        return 0.0
+    if bucket_key is None:
+        total = 0.0
+        folds = 0.0
+        for counts in bucket.values():
+            total += counts.get("fold", 0.0) + counts.get("call", 0.0)
+            folds += counts.get("fold", 0.0)
+    else:
+        counts = bucket.get(bucket_key, {})
+        total = counts.get("fold", 0.0) + counts.get("call", 0.0)
+        folds = counts.get("fold", 0.0)
+    if total < 5:
+        return 0.0
+    return folds / total
+
+
+def _opponent_call_rate(street: Optional[int]) -> float:
+    if street is None:
+        total = 0.0
+        calls = 0.0
+        for bucket in _OPPONENT_BET_MODEL["by_street"].values():
+            for counts in bucket.values():
+                total += counts.get("fold", 0.0) + counts.get("call", 0.0)
+                calls += counts.get("call", 0.0)
+    else:
+        bucket = _OPPONENT_BET_MODEL["by_street"].get(street)
+        if not bucket:
+            return 0.0
+        total = 0.0
+        calls = 0.0
+        for counts in bucket.values():
+            total += counts.get("fold", 0.0) + counts.get("call", 0.0)
+            calls += counts.get("call", 0.0)
+    if total < 5:
+        return 0.0
+    return calls / total
+
+
+def record_opponent_bet_response(street: int, bet_size: int, pot_total: int, folded: bool) -> None:
+    street_bucket = _OPPONENT_BET_MODEL["by_street"].setdefault(street, {})
+    bucket_key = _bet_size_bucket(bet_size, pot_total)
+    counts = street_bucket.setdefault(bucket_key, {"fold": 0.0, "call": 0.0})
+    if folded:
+        counts["fold"] += 1.0
+    else:
+        counts["call"] += 1.0
+
+
+def decay_bet_model() -> None:
+    by_street = _OPPONENT_BET_MODEL["by_street"]
+    for street, bucket in by_street.items():
+        for counts in bucket.values():
+            counts["fold"] *= _BET_MODEL_DECAY
+            counts["call"] *= _BET_MODEL_DECAY
+
+
+def _bet_size_bucket(bet_size: int, pot_total: int) -> str:
+    pot = max(1, pot_total)
+    ratio = bet_size / float(pot)
+    if ratio <= 0.5:
+        return "small"
+    if ratio <= 1.0:
+        return "medium"
+    return "large"
+
+
+def fold_equity_estimate(player_id, bet_size: int, street: int, pot_total: int) -> float:
+    bucket_key = _bet_size_bucket(bet_size, pot_total)
+    fold_rate = _opponent_fold_rate(street, bucket_key)
+    if fold_rate > 0.0:
+        return fold_rate
+    return _opponent_fold_rate(street, None)
+
+
+def record_opponent_raise(street: int) -> None:
+    bucket = _OPPONENT_RANGE_MODEL["by_street"].setdefault(
+        street,
+        {"raises": 0.0, "calls": 0.0, "folds": 0.0, "checks": 0.0, "total": 0.0},
+    )
+    bucket["raises"] += 1.0
+    bucket["total"] += 1.0
+
+
+def record_opponent_action(street: int) -> None:
+    record_opponent_check(street)
+
+
+def record_opponent_call(street: int) -> None:
+    bucket = _OPPONENT_RANGE_MODEL["by_street"].setdefault(
+        street,
+        {"raises": 0.0, "calls": 0.0, "folds": 0.0, "checks": 0.0, "total": 0.0},
+    )
+    bucket["calls"] += 1.0
+    bucket["total"] += 1.0
+
+
+def record_opponent_fold(street: int) -> None:
+    bucket = _OPPONENT_RANGE_MODEL["by_street"].setdefault(
+        street,
+        {"raises": 0.0, "calls": 0.0, "folds": 0.0, "checks": 0.0, "total": 0.0},
+    )
+    bucket["folds"] += 1.0
+    bucket["total"] += 1.0
+
+
+def record_opponent_check(street: int) -> None:
+    bucket = _OPPONENT_RANGE_MODEL["by_street"].setdefault(
+        street,
+        {"raises": 0.0, "calls": 0.0, "folds": 0.0, "checks": 0.0, "total": 0.0},
+    )
+    bucket["checks"] += 1.0
+    bucket["total"] += 1.0
+
+
+def record_inferred_range(strength: float) -> None:
+    inferred = _OPPONENT_RANGE_MODEL["inferred"]
+    inferred["sum"] += float(strength)
+    inferred["total"] += 1.0
+
+
+def record_opponent_showdown(win: bool) -> None:
+    key = "wins" if win else "losses"
+    _OPPONENT_RANGE_MODEL["showdowns"][key] += 1.0
+
+
+def decay_range_model() -> None:
+    for bucket in _OPPONENT_RANGE_MODEL["by_street"].values():
+        bucket["raises"] *= _RANGE_MODEL_DECAY
+        bucket["calls"] *= _RANGE_MODEL_DECAY
+        bucket["folds"] *= _RANGE_MODEL_DECAY
+        bucket["checks"] *= _RANGE_MODEL_DECAY
+        bucket["total"] *= _RANGE_MODEL_DECAY
+    _OPPONENT_RANGE_MODEL["showdowns"]["wins"] *= _RANGE_MODEL_DECAY
+    _OPPONENT_RANGE_MODEL["showdowns"]["losses"] *= _RANGE_MODEL_DECAY
+    _OPPONENT_RANGE_MODEL["inferred"]["sum"] *= _RANGE_MODEL_DECAY
+    _OPPONENT_RANGE_MODEL["inferred"]["total"] *= _RANGE_MODEL_DECAY
+
+
+def opponent_range_strength() -> float:
+    showdowns = _OPPONENT_RANGE_MODEL["showdowns"]
+    total = showdowns["wins"] + showdowns["losses"]
+    if total < 3:
+        return 0.0
+    return (showdowns["wins"] - showdowns["losses"]) / total
+
+
+def update_range_after_discard(range3, discarded_card):
+    record_opponent_discard(discarded_card)
+    return range3
+
+
+def _should_bluff(street: int, board_cards: Sequence[str], allow_bluff: bool = True) -> bool:
+    if not allow_bluff:
+        return False
+    if street == 0:
+        return random.random() < 0.006
+    if street < 3:
+        return False
+    board_int = stats._ensure_int_cards(list(board_cards))
+    board_tuple = tuple(board_int)
+    if _board_is_paired(board_tuple):
+        return False
+    if _board_is_flushy(board_tuple):
+        return False
+    return random.random() < 0.006
+
+
+def record_opponent_discard(card: str) -> None:
+    card_int = stats._ensure_int_cards([card])[0]
+    rank = stats.Card.get_rank_int(card_int)
+    suit = stats.Card.get_suit_int(card_int)
+    suit_index = {1: 0, 2: 1, 4: 2, 8: 3}.get(suit)
+    if suit_index is None:
+        return
+    _OPPONENT_DISCARD_MODEL["rank_counts"][rank] += 1
+    _OPPONENT_DISCARD_MODEL["suit_counts"][suit_index] += 1
+    _OPPONENT_DISCARD_MODEL["total"] += 1
+
+
+def decay_discard_model() -> None:
+    total = _OPPONENT_DISCARD_MODEL["total"]
+    if total <= 0:
+        return
+    rank_counts = []
+    suit_counts = []
+    for count in _OPPONENT_DISCARD_MODEL["rank_counts"]:
+        rank_counts.append(count * _DISCARD_MODEL_DECAY)
+    for count in _OPPONENT_DISCARD_MODEL["suit_counts"]:
+        suit_counts.append(count * _DISCARD_MODEL_DECAY)
+    _OPPONENT_DISCARD_MODEL["rank_counts"] = rank_counts
+    _OPPONENT_DISCARD_MODEL["suit_counts"] = suit_counts
+    _OPPONENT_DISCARD_MODEL["total"] = total * _DISCARD_MODEL_DECAY
+
+
+def _apply_info_penalty_decay(value: float, player) -> float:
+    round_num = getattr(player, "round_num", 0)
+    if round_num <= 0:
+        return value
+    if round_num < 200:
+        decay = 0.995
+    elif round_num < 600:
+        decay = 0.99
+    else:
+        decay = 0.985
+    return max(_INFO_PENALTY_MIN, min(_INFO_PENALTY_MAX, value * decay))
+
+
+def update_info_penalty_from_round(player) -> None:
+    global _INFO_PENALTY
+    discard = getattr(player.hero, "last_discard", None)
+    discard_visible = getattr(player.hero, "last_discard_visible", None)
+    delta = getattr(player.hero, "delta", 0)
+    if discard is None or discard_visible is not True:
+        _INFO_PENALTY = _apply_info_penalty_decay(_INFO_PENALTY, player)
+        return
+    discard_int = stats._ensure_int_cards([discard])[0]
+    rank = stats.Card.get_rank_int(discard_int) + 2
+    strength = rank / 14
+    if delta < 0:
+        _INFO_PENALTY = min(_INFO_PENALTY_MAX, _INFO_PENALTY + 0.01 * strength)
+    elif delta > 0:
+        _INFO_PENALTY = max(_INFO_PENALTY_MIN, _INFO_PENALTY - 0.005 * strength)
+    opponent_strength = opponent_range_strength()
+    if opponent_strength:
+        _INFO_PENALTY = min(
+            _INFO_PENALTY_MAX,
+            max(_INFO_PENALTY_MIN, _INFO_PENALTY + 0.01 * opponent_strength),
+        )
+    _INFO_PENALTY = _apply_info_penalty_decay(_INFO_PENALTY, player)
+    _update_random_policy(player)
+
+
+def _policy_bias(player, equity: float, pot_odds: float) -> float:
+    global _LAST_HIDDEN
+    features = _policy_features(player, equity, pot_odds)
+    hidden = _RANDOM_POLICY.forward(features)
+    _LAST_HIDDEN = hidden
+    score = _RANDOM_POLICY.score(hidden)
+    return max(-0.05, min(0.05, score))
+
+
+def _policy_features(player, equity: float, pot_odds: float) -> List[float]:
+    pot_total = max(1, player.hero.pot_total)
+    return [
+        equity,
+        pot_odds,
+        min(1.0, player.street / 6.0),
+        min(1.0, player.hero.stack / float(pot_total)),
+        min(1.0, player.hero.continue_cost / float(pot_total)),
+        1.0 if player.hero.blind else 0.0,
+        1.0,
+        0.5,
+    ]
+
+
+def _update_random_policy(player) -> None:
+    global _LAST_HIDDEN
+    if not _USE_RANDOM_POLICY or _LAST_HIDDEN is None:
+        return
+    delta = getattr(player.hero, "delta", 0)
+    reward = max(-1.0, min(1.0, delta / 100.0))
+    _RANDOM_POLICY.update(_LAST_HIDDEN, reward, _RANDOM_POLICY_LR)
+    _LAST_HIDDEN = None
+
+
+def _should_pressure(player, equity: float) -> bool:
+    if equity < _PRESSURE_EQUITY_THRESHOLD:
+        return False
+    fold_rate = _opponent_fold_rate(player.street, None)
+    if fold_rate <= 0.0:
+        return True
+    return fold_rate >= _PRESSURE_FOLDRATE_MIN
+
+
+def _select_discard_asymmetric(
+    hero_hand: Sequence[str],
+    equities: Sequence[float],
+    discard_visible: bool,
+    opponent_discard: Optional[str] = None,
+    board_cards: Optional[Sequence[str]] = None,
+) -> int:
+    if not equities:
+        return 0
+    if not discard_visible and opponent_discard is None:
+        return max(range(len(equities)), key=equities.__getitem__)
+
+    cards_int = stats._ensure_int_cards(list(hero_hand))
+    info_penalty = _INFO_PENALTY if discard_visible else 0.0
+    scores = []
+    opponent_int = None
+    if opponent_discard is not None:
+        opponent_int = stats._ensure_int_cards([opponent_discard])[0]
+    for idx, equity in enumerate(equities):
+        rank = stats.Card.get_rank_int(cards_int[idx]) + 2
+        score = equity - info_penalty * (rank / 14)
+        if board_cards is not None:
+            score -= _discard_externality_penalty(board_cards, cards_int[idx])
+        if opponent_int is not None:
+            discard_card = cards_int[idx]
+            keep_cards = [card for i, card in enumerate(cards_int) if i != idx]
+            score -= _discard_order_penalty(keep_cards, discard_card, opponent_int)
+        scores.append(score)
+    return max(range(len(scores)), key=scores.__getitem__)
+
+
+def _discard_externality_penalty(board_cards: Sequence[str], discard_card: int) -> float:
+    board_int = stats._ensure_int_cards(list(board_cards))
+    if not board_int:
+        return 0.0
+    ranks = [stats.Card.get_rank_int(card) for card in board_int]
+    suits = [stats.Card.get_suit_int(card) for card in board_int]
+    discard_rank = stats.Card.get_rank_int(discard_card)
+    discard_suit = stats.Card.get_suit_int(discard_card)
+    penalty = 0.0
+    if discard_rank in ranks:
+        penalty += 0.012
+    if suits.count(discard_suit) >= 2:
+        penalty += 0.015
+    return penalty
+
+
+def _discard_order_penalty(
+    keep_cards: Sequence[int],
+    discard_card: int,
+    opponent_discard: int,
+) -> float:
+    penalty = 0.0
+    discard_suit = stats.Card.get_suit_int(discard_card)
+    discard_rank = stats.Card.get_rank_int(discard_card)
+    keep_suits = [stats.Card.get_suit_int(card) for card in keep_cards]
+    keep_ranks = [stats.Card.get_rank_int(card) for card in keep_cards]
+    opp_suit = stats.Card.get_suit_int(opponent_discard)
+    opp_rank = stats.Card.get_rank_int(opponent_discard)
+    if discard_suit == opp_suit and opp_suit not in keep_suits:
+        penalty += 0.015
+    if discard_rank == opp_rank and opp_rank not in keep_ranks:
+        penalty += 0.012
+    return penalty

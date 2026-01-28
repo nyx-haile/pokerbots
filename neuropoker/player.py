@@ -6,7 +6,7 @@ from skeleton.states import GameState, TerminalState, RoundState
 from skeleton.states import NUM_ROUNDS, STARTING_STACK, BIG_BLIND, SMALL_BLIND
 from skeleton.bot import Bot
 from skeleton.runner import parse_args, run_bot
-from strategies.desperate import DesperatePolicy
+from policies.desperate import DesperatePolicy
 
 import os
 import random
@@ -52,7 +52,6 @@ class Player(Bot):
         self._last_bet_pot = None
         self._last_bet_street = None
         self._last_aggressor = False
-        self._last_hero_call_street = None
         self._last_hero_call_street = None
         self._leak_stats = {
             "end_by_street": {},
@@ -273,6 +272,7 @@ class Player(Bot):
 
         self.hero.policy_class = None
         self.hero.policy_round = None
+        self._last_hero_call_street = None
 
     def get_action(self, game_state, round_state, active):
         '''
