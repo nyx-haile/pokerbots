@@ -50,6 +50,16 @@ _OVERBET_ACCURACY = {
     "sum_brier": 0.0,
     "sum_abs": 0.0,
 }
+_FOLD_EQUITY_ACCURACY = {
+    "count": 0.0,
+    "sum_brier": 0.0,
+    "sum_abs": 0.0,
+}
+_RANGE_HINT_ACCURACY = {
+    "count": 0.0,
+    "sum_brier": 0.0,
+    "sum_abs": 0.0,
+}
 _RANGE_MODEL_DECAY = 0.99
 _OPPONENT_RANGE_MODEL = {
     "by_street": {},
@@ -429,6 +439,19 @@ def record_overbet_observation(street: int, bet_size: int, pot_total: int) -> No
     _OVERBET_ACCURACY["sum_abs"] += abs(error)
 
 
+def record_fold_equity_observation(street: int, bet_size: int, pot_total: int, folded: bool) -> None:
+    if bet_size <= 0:
+        return
+    pred = fold_equity_estimate(None, bet_size, street, pot_total)
+    if pred <= 0.0:
+        return
+    actual = 1.0 if folded else 0.0
+    error = pred - actual
+    _FOLD_EQUITY_ACCURACY["count"] += 1.0
+    _FOLD_EQUITY_ACCURACY["sum_brier"] += error * error
+    _FOLD_EQUITY_ACCURACY["sum_abs"] += abs(error)
+
+
 def decay_bet_model() -> None:
     by_street = _OPPONENT_BET_MODEL["by_street"]
     for street, bucket in by_street.items():
@@ -507,6 +530,36 @@ def overbet_accuracy_summary() -> str:
     brier = _OVERBET_ACCURACY.get("sum_brier", 0.0) / count
     abs_err = _OVERBET_ACCURACY.get("sum_abs", 0.0) / count
     return f"overbet_accuracy: count={int(count)} brier={brier:.4f} abs_err={abs_err:.3f}"
+
+
+def fold_equity_accuracy_summary() -> str:
+    count = _FOLD_EQUITY_ACCURACY.get("count", 0.0)
+    if count <= 0:
+        return "fold_equity_accuracy: none"
+    brier = _FOLD_EQUITY_ACCURACY.get("sum_brier", 0.0) / count
+    abs_err = _FOLD_EQUITY_ACCURACY.get("sum_abs", 0.0) / count
+    return f"fold_equity_accuracy: count={int(count)} brier={brier:.4f} abs_err={abs_err:.3f}"
+
+
+def record_range_hint_accuracy(strength: float, confidence: float, hero_delta: int) -> None:
+    if confidence <= 0.0:
+        return
+    actual = 1.0 if hero_delta < 0 else 0.0
+    pred = max(0.0, min(1.0, strength))
+    weight = max(0.1, confidence)
+    error = pred - actual
+    _RANGE_HINT_ACCURACY["count"] += weight
+    _RANGE_HINT_ACCURACY["sum_brier"] += weight * error * error
+    _RANGE_HINT_ACCURACY["sum_abs"] += weight * abs(error)
+
+
+def range_hint_accuracy_summary() -> str:
+    count = _RANGE_HINT_ACCURACY.get("count", 0.0)
+    if count <= 0:
+        return "range_hint_accuracy: none"
+    brier = _RANGE_HINT_ACCURACY.get("sum_brier", 0.0) / count
+    abs_err = _RANGE_HINT_ACCURACY.get("sum_abs", 0.0) / count
+    return f"range_hint_accuracy: count={int(count)} brier={brier:.4f} abs_err={abs_err:.3f}"
 
 
 def _opponent_overbet_adjustments(player, bet_size: int, pot_total: int) -> Tuple[float, float]:

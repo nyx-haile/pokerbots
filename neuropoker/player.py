@@ -22,6 +22,10 @@ _SINGLE_CORE_ENV = {
 for key, value in _SINGLE_CORE_ENV.items():
     os.environ.setdefault(key, value)
 
+_LOG_ROUND_SUMMARY = os.environ.get("NEUROPOKER_LOG_ROUNDS", "0") == "1"
+_LOG_ROUND_EVERY = int(os.environ.get("NEUROPOKER_LOG_ROUND_EVERY", "200") or "200")
+_LOG_PREFLOP_DECISIONS = os.environ.get("NEUROPOKER_LOG_PREFLOP", "0") == "1"
+
 import strategy
 import stats
 import lumberjack
@@ -49,10 +53,14 @@ class Player(Bot):
         self._last_board_len = 0
         self._pending_hero_discard = None
         self._last_bet_size = None
+        self._last_bet_delta = None
         self._last_bet_pot = None
         self._last_bet_street = None
         self._last_aggressor = False
         self._last_hero_call_street = None
+        self._hero_bet_buckets = []
+        self._hero_line_actions = {}
+        self._river_value_bet = False
         self._leak_stats = {
             "end_by_street": {},
             "hero_calls": {},
@@ -131,6 +139,14 @@ class Player(Bot):
             strategy.record_opponent_bet_size(prev.street, delta, self._pot_total_from_state(prev))
             self._record_villain_action(prev.street, "raise", delta, self._pot_total_from_state(prev))
 
+    def _hero_line_key(self) -> str:
+        codes = []
+        for street in (0, 4, 5, 6):
+            code = self._hero_line_actions.get(street)
+            if code:
+                codes.append(code)
+        return "-".join(codes) if codes else "none"
+
     def handle_new_round(self, game_state, round_state, active):
         '''
         Called when a new round starts. Called NUM_ROUNDS times.
@@ -161,14 +177,18 @@ class Player(Bot):
         self._last_board_len = len(round_state.board)
         self._pending_hero_discard = None
         self._last_bet_size = None
+        self._last_bet_delta = None
         self._last_bet_pot = None
         self._last_bet_street = None
         self._last_aggressor = False
+        self._hero_bet_buckets = []
+        self._hero_line_actions = {}
+        self._river_value_bet = False
         strategy.begin_round(self)
         self.hero.last_discard_ev = None
         self.hero.raise_plan_target = None
         self.hero.raise_plan_street = None
-        if self.round_num % 100 == 1:
+        if _LOG_ROUND_SUMMARY and self.round_num % _LOG_ROUND_EVERY == 1:
             lumberjack.log(f"round={self.round_num} bankroll={self.hero.bankroll} clock={self.game_clock:.2f}")
 
     def handle_round_over(self, game_state, terminal_state, active):
@@ -208,10 +228,22 @@ class Player(Bot):
                     self._last_bet_pot or 1,
                     True,
                 )
+                strategy.record_fold_equity_observation(
+                    self._last_bet_street or 0,
+                    self._last_bet_delta if self._last_bet_delta is not None else self._last_bet_size,
+                    self._last_bet_pot or 1,
+                    True,
+                )
             elif villain_revealed:
                 strategy.record_opponent_bet_response(
                     self._last_bet_street or 0,
                     self._last_bet_size,
+                    self._last_bet_pot or 1,
+                    False,
+                )
+                strategy.record_fold_equity_observation(
+                    self._last_bet_street or 0,
+                    self._last_bet_delta if self._last_bet_delta is not None else self._last_bet_size,
                     self._last_bet_pot or 1,
                     False,
                 )
@@ -224,6 +256,8 @@ class Player(Bot):
                 strategy.record_opponent_showdown(True)
             if len(self.villain.hand) == 2:
                 strategy.record_inferred_range(stats.two_card_strength(self.villain.hand))
+            strength, confidence = strategy.opponent_range_hint()
+            strategy.record_range_hint_accuracy(strength, confidence, int(self.hero.delta))
         if getattr(self.hero, "last_discard_ev", None):
             lumberjack.record_discard_outcome(self.hero.last_discard_ev, int(self.hero.delta))
             self.hero.last_discard_ev = None
@@ -262,17 +296,30 @@ class Player(Bot):
         if end_street == 6 and self.hero.delta < 0 and self._last_bet_street in (4, 5):
             self._leak_stats["river_loss_after_bet"]["count"] += 1
             self._leak_stats["river_loss_after_bet"]["delta"] += int(self.hero.delta)
-        if self.round_num % 100 == 1:
+        for street, bucket in self._hero_bet_buckets:
+            lumberjack.record_bet_size_outcome(street, bucket, int(self.hero.delta))
+        if self._river_value_bet:
+            lumberjack.record_river_value_bet(int(self.hero.delta))
+        if self.villain.hand:
+            line_key = self._hero_line_key()
+            lumberjack.record_showdown_line(line_key, int(self.hero.delta))
+        if _LOG_ROUND_SUMMARY and self.round_num % _LOG_ROUND_EVERY == 1:
             lumberjack.log(f"round_over={self.round_num} delta={self.hero.delta}")
 
         if game_state.round_num >= NUM_ROUNDS:
             lumberjack.log(lumberjack.policy_summary(strategy._POLICY_STATS))
             lumberjack.log(lumberjack.leak_summary(self._leak_stats))
             lumberjack.log(lumberjack.policy_action_summary())
+            lumberjack.log(lumberjack.aggression_ratio_summary())
             lumberjack.log(lumberjack.equity_vs_pot_odds_summary())
             lumberjack.log(lumberjack.discard_ev_summary())
+            lumberjack.log(lumberjack.showdown_line_summary())
+            lumberjack.log(lumberjack.bet_size_ev_summary())
+            lumberjack.log(lumberjack.river_value_bet_summary())
             lumberjack.log(strategy.opponent_overbet_summary())
             lumberjack.log(strategy.overbet_accuracy_summary())
+            lumberjack.log(strategy.fold_equity_accuracy_summary())
+            lumberjack.log(strategy.range_hint_accuracy_summary())
 
         if self.hero.policy_class == DesperatePolicy and self.hero.delta < 0:
             self.hero.enable_desperate = False
@@ -366,7 +413,21 @@ class Player(Bot):
             self._pending_hero_discard = self.hero.hand[action.card]
         if isinstance(action, CallAction):
             self._last_hero_call_street = self.street
-        if self.street <= 0:
+        lumberjack.record_hero_action(self.street, action.__class__.__name__)
+        if self.street in (0, 4, 5, 6) and not isinstance(action, DiscardAction):
+            if self.street not in self._hero_line_actions:
+                if isinstance(action, RaiseAction):
+                    code = "R"
+                elif isinstance(action, CallAction):
+                    code = "C"
+                elif isinstance(action, CheckAction):
+                    code = "K"
+                elif isinstance(action, FoldAction):
+                    code = "F"
+                else:
+                    code = "?"
+                self._hero_line_actions[self.street] = code
+        if _LOG_PREFLOP_DECISIONS and self.street <= 0:
             bucket = getattr(self.hero, "preflop_bucket", "n/a")
             roll = getattr(self.hero, "preflop_roll", None)
             lumberjack.log(
@@ -383,7 +444,13 @@ class Player(Bot):
                 )
             )
         if isinstance(action, RaiseAction):
+            bet_delta = max(0, action.amount - self.hero.pip)
+            bucket = strategy._bet_size_bucket(bet_delta, max(1, self.hero.pot_total))
+            self._hero_bet_buckets.append((int(self.street), bucket))
+            if self.street == 6 and self.hero.continue_cost == 0:
+                self._river_value_bet = True
             self._last_bet_size = action.amount
+            self._last_bet_delta = bet_delta
             self._last_bet_pot = self.hero.pot_total
             self._last_bet_street = self.street
             self._last_aggressor = True

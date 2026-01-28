@@ -6,6 +6,10 @@ from typing import Dict
 _POLICY_ACTIONS: Dict[str, Dict[int, Dict[str, int]]] = {}
 _POLICY_EQUITY_ODDS: Dict[str, Dict[int, Dict[str, float]]] = {}
 _DISCARD_EV_STATS: Dict[str, Dict[int, Dict[str, float]]] = {}
+_HERO_ACTIONS: Dict[int, Dict[str, int]] = {}
+_SHOWDOWN_LINES: Dict[str, Dict[str, float]] = {}
+_BET_SIZE_EV: Dict[int, Dict[str, Dict[str, float]]] = {}
+_RIVER_VALUE_BET: Dict[str, float] = {"count": 0.0, "wins": 0.0, "sum_delta": 0.0}
 
 
 def policy_summary(stats: Dict[str, Dict]) -> str:
@@ -125,6 +129,11 @@ def record_equity_vs_pot_odds(
     street_bucket["sum_abs_diff"] += abs(diff)
 
 
+def record_hero_action(street: int, action: str) -> None:
+    street_bucket = _HERO_ACTIONS.setdefault(int(street), {})
+    street_bucket[action] = street_bucket.get(action, 0) + 1
+
+
 def policy_action_summary() -> str:
     if not _POLICY_ACTIONS:
         return "policy_actions: none"
@@ -135,6 +144,23 @@ def policy_action_summary() -> str:
             actions = policy_bucket[street]
             parts = [f"{name}={actions[name]}" for name in sorted(actions)]
             lines.append(f"  {policy} street={street} " + " ".join(parts))
+    return "\n".join(lines)
+
+
+def aggression_ratio_summary() -> str:
+    if not _HERO_ACTIONS:
+        return "aggression_ratio: none"
+    lines = ["aggression_ratio:"]
+    for street in sorted(_HERO_ACTIONS):
+        bucket = _HERO_ACTIONS[street]
+        raises = bucket.get("RaiseAction", 0)
+        calls = bucket.get("CallAction", 0)
+        checks = bucket.get("CheckAction", 0)
+        denom = max(1, calls + checks)
+        ratio = raises / denom
+        lines.append(
+            f"  street={street} raises={raises} calls={calls} checks={checks} ratio={ratio:.3f}"
+        )
     return "\n".join(lines)
 
 
@@ -159,6 +185,93 @@ def equity_vs_pot_odds_summary() -> str:
                 f"diff={avg_diff:.3f} abs_diff={avg_abs_diff:.3f}"
             )
     return "\n".join(lines)
+
+
+def record_showdown_line(line_key: str, delta: int) -> None:
+    if not line_key:
+        return
+    bucket = _SHOWDOWN_LINES.setdefault(
+        line_key,
+        {"count": 0.0, "wins": 0.0, "losses": 0.0, "sum_delta": 0.0},
+    )
+    bucket["count"] += 1.0
+    bucket["sum_delta"] += float(delta)
+    if delta > 0:
+        bucket["wins"] += 1.0
+    elif delta < 0:
+        bucket["losses"] += 1.0
+
+
+def showdown_line_summary() -> str:
+    if not _SHOWDOWN_LINES:
+        return "showdown_lines: none"
+    lines = ["showdown_lines:"]
+    for line_key in sorted(_SHOWDOWN_LINES):
+        bucket = _SHOWDOWN_LINES[line_key]
+        count = bucket.get("count", 0.0)
+        if count <= 0:
+            continue
+        wins = bucket.get("wins", 0.0)
+        losses = bucket.get("losses", 0.0)
+        win_rate = wins / max(1.0, wins + losses)
+        avg_delta = bucket.get("sum_delta", 0.0) / count
+        lines.append(
+            f"  line={line_key} hands={int(count)} win_rate={win_rate:.3f} avg_delta={avg_delta:.2f}"
+        )
+    return "\n".join(lines)
+
+
+def record_bet_size_outcome(street: int, bucket: str, delta: int) -> None:
+    street_bucket = _BET_SIZE_EV.setdefault(int(street), {})
+    bucket_stats = street_bucket.setdefault(
+        bucket,
+        {"count": 0.0, "wins": 0.0, "losses": 0.0, "sum_delta": 0.0},
+    )
+    bucket_stats["count"] += 1.0
+    bucket_stats["sum_delta"] += float(delta)
+    if delta > 0:
+        bucket_stats["wins"] += 1.0
+    elif delta < 0:
+        bucket_stats["losses"] += 1.0
+
+
+def bet_size_ev_summary() -> str:
+    if not _BET_SIZE_EV:
+        return "bet_size_ev: none"
+    lines = ["bet_size_ev:"]
+    for street in sorted(_BET_SIZE_EV):
+        bucket = _BET_SIZE_EV[street]
+        for size_key in sorted(bucket):
+            stats = bucket[size_key]
+            count = stats.get("count", 0.0)
+            if count <= 0:
+                continue
+            avg_delta = stats.get("sum_delta", 0.0) / count
+            wins = stats.get("wins", 0.0)
+            losses = stats.get("losses", 0.0)
+            win_rate = wins / max(1.0, wins + losses)
+            lines.append(
+                f"  street={street} size={size_key} hands={int(count)} "
+                f"win_rate={win_rate:.3f} avg_delta={avg_delta:.2f}"
+            )
+    return "\n".join(lines)
+
+
+def record_river_value_bet(delta: int) -> None:
+    _RIVER_VALUE_BET["count"] += 1.0
+    _RIVER_VALUE_BET["sum_delta"] += float(delta)
+    if delta > 0:
+        _RIVER_VALUE_BET["wins"] += 1.0
+
+
+def river_value_bet_summary() -> str:
+    count = _RIVER_VALUE_BET.get("count", 0.0)
+    if count <= 0:
+        return "river_value_bet: none"
+    wins = _RIVER_VALUE_BET.get("wins", 0.0)
+    win_rate = wins / max(1.0, count)
+    avg_delta = _RIVER_VALUE_BET.get("sum_delta", 0.0) / count
+    return f"river_value_bet: count={int(count)} win_rate={win_rate:.3f} avg_delta={avg_delta:.2f}"
 
 
 def record_discard_decision(policy: str, street: int, equities, chosen_idx: int):
