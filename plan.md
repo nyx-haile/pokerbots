@@ -25,7 +25,7 @@
 - Determinism: identical inputs must yield identical outputs; use per-hand seeded randomness only when required.
 - No preflop Monte Carlo; preflop must use fast heuristics/lookup. (`design/preflop.txt`)
 - Single-core only; no multithreading or GPU assumptions. (`documentation/server_environment.md`)
-- No online learning during a live match; any adaptation must be offline or extremely constrained. (`research/self_play_harness_design.md`)
+ - In-match adaptation limited to decayed counters and simple statistics; any major retraining happens offline. (`research/self_play_harness_design.md`)
 - Use engine-driven, process-isolated self-play with deterministic seeds and seat swaps for evaluation. (`research/self_play_harness_design.md`)
 - Discard mechanics are central: discard order adds information asymmetry; strategies must model public discard impact. (`research/Developing a Fast Winning Strategy for __Toss or Hold’em__ Pokerbots.pdf`)
 - Stronger hands are more common with 6-board; thresholds must be tighter post-discard. (`research/Strategy Design for a Top-Performing Toss or Hold'em Pokerbot (Pokerbots 2026).pdf`)
@@ -39,7 +39,7 @@
 2. **Define inputs, outputs, and constraints for each variant.**
    - Shared inputs (all variants): hole cards (3/2), board cards (0–6), street, pot size, stacks, continue_cost, position/blind, opponent discard stats, opponent bet-response stats.
    - Shared outputs (all variants): deterministic action choice (Fold/Call/Check/Raise/Discard) with a seeded tie-break roll only when scores are equal; raises must respect min/max bounds.
-   - Shared constraints (all variants): single-core only; deterministic; no preflop MC; per-decision budget target <= 1–2 ms; no online learning during a match.
+    - Shared constraints (all variants): single-core only; deterministic; no preflop MC; per-decision budget target <= 1–2 ms; in-match adjustments are limited to bounded counters/statistics.
    - Variant A (pairwise couplings): compute fixed pairwise features (rank gaps, suitedness, board-texture pairs); feed into a tiny linear scorer; zero dynamic weights.
    - Variant B (fixed graph transform): build a static adjacency over cards/roles (hole vs board vs discard); aggregate with fixed weights; no training step.
    - Variant C (exploitative thresholds): adjust raise/call/fold thresholds based on decayed opponent stats; no parameter updates beyond counters.
@@ -78,6 +78,12 @@
 
 ## New Strategy Enhancements
 - Exploit reraises as information: add learning that conditions opponent range and action likelihoods on reraises, tracking reraise frequency and sizing to tighten post-raise call/raise decisions.
+
+## New Requests / Future Work (2026-01-28)
+- **TODO:** Add an oracle “god-mode” benchmark bot that sees full runout (flop/turn/river) at deal time; use it as a training adversary and upper-bound performance benchmark.
+- **TODO:** Drive action selection directly from the opponent model (turn tracked fold/call/raise + sizing stats into bounded incentives/threshold tweaks).
+- **TODO:** Explore a symbolic equity estimator for faster/safer evaluation (lower priority; likely post‑project).
+- **TODO:** Add explicit GTO guardrails: cap exploitative bias magnitudes, require minimum samples before adapting, and prefer equilibrium‑safe adjustments.
 
 ## Turn + Betting Logic Review (Scrim Analysis)
 ### Decision Flow (current)
@@ -186,8 +192,8 @@
 - Use adaptive bet sizing (larger vs overfolds, thinner value vs callers). (DONE)
 
 ## Phase 5: Lightweight learning experiments
-- Add a random-feature policy (ELM / random kitchen sinks) with a linear readout. (DONE)
-- Use online Hebbian updates; test Mimetic updates if activations are invertible. (DONE)
+- Add a random-feature policy (ELM / random kitchen sinks) with a linear readout that is trained offline. (DONE)
+- Track opponent statistics with a simple, decayed frequency counter; no mimetic/hebbian updates are running during a match. (DONE)
 - Keep model size small (dozens of weights) to preserve speed. (DONE)
 
 ## Phase 6: Evaluation and tuning

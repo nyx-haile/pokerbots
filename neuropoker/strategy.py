@@ -817,7 +817,7 @@ def update_policy_from_round(player: PlayerView) -> None:
     policy_class = getattr(player.hero, "policy_class", None)
     if not policy_class:
         return
-    _ensure_policy_stats()
+    _ensure_policy_stats(policy_class)
     policy_key = _policy_key(policy_class)
     if policy_key not in _POLICY_STATS:
         return
@@ -832,6 +832,8 @@ def update_policy_from_round(player: PlayerView) -> None:
     stats_bucket = _POLICY_STATS[policy_key]
     stats_bucket["avg"] += lr * (reward - stats_bucket["avg"])
     stats_bucket["count"] += 1.0
+    stats_bucket["total_delta"] += float(delta)
+    stats_bucket["total_reward"] += float(reward)
 
 
 def _policy_key(policy_class) -> str:
@@ -845,10 +847,40 @@ def _policy_classes():
     return (bluff_policy.BluffPolicy, tight_policy.TightPolicy)
 
 
-def _ensure_policy_stats() -> None:
-    for policy_class in _policy_classes():
+def _ensure_policy_stats(policy_class=None) -> None:
+    if policy_class is not None:
         key = _policy_key(policy_class)
-        _POLICY_STATS.setdefault(key, {"avg": 0.0, "count": 0.0})
+        _POLICY_STATS.setdefault(
+            key,
+            {"avg": 0.0, "count": 0.0, "total_delta": 0.0, "total_reward": 0.0},
+        )
+        return
+    for cls in _policy_classes():
+        key = _policy_key(cls)
+        _POLICY_STATS.setdefault(
+            key,
+            {"avg": 0.0, "count": 0.0, "total_delta": 0.0, "total_reward": 0.0},
+        )
+
+
+def policy_summary() -> str:
+    if not _POLICY_STATS:
+        return "policy_stats: none"
+    entries = []
+    for key, stats_bucket in _POLICY_STATS.items():
+        count = stats_bucket.get("count", 0.0)
+        if count <= 0:
+            continue
+        avg_delta = stats_bucket.get("total_delta", 0.0) / count
+        avg_reward = stats_bucket.get("total_reward", 0.0) / count
+        avg = stats_bucket.get("avg", 0.0)
+        entries.append(
+            f"{key}: hands={int(count)} avg_delta={avg_delta:.2f} avg_reward={avg_reward:.3f} ema_reward={avg:.3f}"
+        )
+    if not entries:
+        return "policy_stats: none"
+    entries.sort()
+    return "policy_stats: " + " | ".join(entries)
 
 
 def _select_round_policy(player: PlayerView):

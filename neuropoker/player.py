@@ -199,6 +199,9 @@ class Player(Bot):
         if self.round_num % 100 == 1:
             self._log(f"round_over={self.round_num} delta={self.hero.delta}")
 
+        if game_state.round_num >= NUM_ROUNDS:
+            self._log(strategy.policy_summary())
+
         if self.hero.policy_class == DesperatePolicy and self.hero.delta < 0:
             self.hero.enable_desperate = False
 

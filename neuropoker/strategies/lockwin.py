@@ -90,7 +90,7 @@ class DesperatePolicy:
                 equity = stats.estimate_equity(
                     hero_hand,
                     board_cards,
-                    samples=samples,
+                    samples=stats._HIGH_VALUE_EQUITY_SAMPLES,
                     max_seconds=max_seconds,
                     discard_samples=discard_samples,
                 )
