@@ -115,9 +115,6 @@ class Player(Bot):
                 strategy.record_opponent_check(prev.street)
                 self._record_villain_action(prev.street, "check", 0, self._pot_total_from_state(prev))
             return
-        if len(round_state.board) > len(prev.board):
-            return
-
         # Same street: infer by pip delta.
         delta = round_state.pips[prev_actor] - prev.pips[prev_actor]
         if delta <= 0:
