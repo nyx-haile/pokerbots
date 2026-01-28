@@ -35,13 +35,13 @@ def _preflop_open_decision(
     pos_raise_scale = 1.1 if not getattr(player.hero, "blind", False) else 0.9
     if RaiseAction in legal_actions:
         if effective_equity >= raise_strong:
-            raise_prob = 0.7
+            raise_prob = 0.8
             bucket = "raise_strong"
         elif effective_equity >= raise_medium:
-            raise_prob = 0.45
+            raise_prob = 0.55
             bucket = "raise_medium"
         elif effective_equity >= raise_light:
-            raise_prob = 0.25
+            raise_prob = 0.35
             bucket = "raise_light"
         else:
             raise_prob = 0.0

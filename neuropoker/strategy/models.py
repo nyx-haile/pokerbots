@@ -50,16 +50,31 @@ _OVERBET_ACCURACY = {
     "sum_brier": 0.0,
     "sum_abs": 0.0,
 }
+_OVERBET_ACCURACY_BY_STREET = {}
 _FOLD_EQUITY_ACCURACY = {
     "count": 0.0,
     "sum_brier": 0.0,
     "sum_abs": 0.0,
 }
+_FOLD_EQUITY_ACCURACY_BY_STREET = {}
+_FOLD_EQUITY_OBS = {}
 _RANGE_HINT_ACCURACY = {
     "count": 0.0,
     "sum_brier": 0.0,
     "sum_abs": 0.0,
 }
+_RANGE_HINT_ACCURACY_BY_STREET = {}
+_RANGE_HINT_ACCURACY_BY_LINE = {}
+_LINE_OUTCOMES = {}
+
+_ACCURACY_MIN_OBS = {
+    "overbet": 10,
+    "fold_equity": 8,
+    "range_hint": 8,
+}
+_ACCURACY_MIN_CONFIDENCE = 0.25
+_RANGE_HINT_MIN_LINE_OBS = 10
+_LINE_PRIOR_MIN_OBS = 12
 _RANGE_MODEL_DECAY = 0.99
 _OPPONENT_RANGE_MODEL = {
     "by_street": {},
@@ -432,24 +447,66 @@ def record_overbet_observation(street: int, bet_size: int, pot_total: int) -> No
     rate, _, confidence = opponent_overbet_rate(street)
     if confidence <= 0.0:
         return
+    if confidence < _ACCURACY_MIN_CONFIDENCE:
+        return
+    total = _OPPONENT_BET_SIZE_MODEL["by_street"].get(street, {}).get("total", 0.0)
+    if total < _ACCURACY_MIN_OBS["overbet"]:
+        return
     prob = max(0.0, min(1.0, rate))
     error = prob - is_overbet
     _OVERBET_ACCURACY["count"] += 1.0
     _OVERBET_ACCURACY["sum_brier"] += error * error
     _OVERBET_ACCURACY["sum_abs"] += abs(error)
+    street_bucket = _OVERBET_ACCURACY_BY_STREET.setdefault(
+        int(street),
+        {"count": 0.0, "sum_brier": 0.0, "sum_abs": 0.0},
+    )
+    street_bucket["count"] += 1.0
+    street_bucket["sum_brier"] += error * error
+    street_bucket["sum_abs"] += abs(error)
 
 
-def record_fold_equity_observation(street: int, bet_size: int, pot_total: int, folded: bool) -> None:
+def record_fold_equity_observation(
+    street: int,
+    bet_size: int,
+    pot_total: int,
+    folded: bool,
+    line_key: Optional[str] = None,
+) -> None:
     if bet_size <= 0:
         return
     pred = fold_equity_estimate(None, bet_size, street, pot_total)
     if pred <= 0.0:
         return
+    obs_bucket = _FOLD_EQUITY_OBS.setdefault(int(street), {}).setdefault(
+        _bet_size_bucket(bet_size, pot_total),
+        {"count": 0.0},
+    )
+    obs_bucket["count"] += 1.0
+    if obs_bucket["count"] < _ACCURACY_MIN_OBS["fold_equity"]:
+        return
+    bucket_key = _bet_size_bucket(bet_size, pot_total)
+    street_bucket = _OPPONENT_BET_MODEL["by_street"].get(street, {})
+    bucket_counts = street_bucket.get(bucket_key, {})
+    bucket_total = bucket_counts.get("fold", 0.0) + bucket_counts.get("call", 0.0)
+    confidence = min(1.0, bucket_total / 12.0)
+    if confidence < _ACCURACY_MIN_CONFIDENCE:
+        return
     actual = 1.0 if folded else 0.0
     error = pred - actual
-    _FOLD_EQUITY_ACCURACY["count"] += 1.0
-    _FOLD_EQUITY_ACCURACY["sum_brier"] += error * error
-    _FOLD_EQUITY_ACCURACY["sum_abs"] += abs(error)
+    weight = _line_reliability_weight(line_key)
+    if weight <= 0.5:
+        return
+    _FOLD_EQUITY_ACCURACY["count"] += weight
+    _FOLD_EQUITY_ACCURACY["sum_brier"] += weight * error * error
+    _FOLD_EQUITY_ACCURACY["sum_abs"] += weight * abs(error)
+    street_accuracy = _FOLD_EQUITY_ACCURACY_BY_STREET.setdefault(
+        int(street),
+        {"count": 0.0, "sum_brier": 0.0, "sum_abs": 0.0},
+    )
+    street_accuracy["count"] += weight
+    street_accuracy["sum_brier"] += weight * error * error
+    street_accuracy["sum_abs"] += weight * abs(error)
 
 
 def decay_bet_model() -> None:
@@ -529,7 +586,18 @@ def overbet_accuracy_summary() -> str:
         return "overbet_accuracy: none"
     brier = _OVERBET_ACCURACY.get("sum_brier", 0.0) / count
     abs_err = _OVERBET_ACCURACY.get("sum_abs", 0.0) / count
-    return f"overbet_accuracy: count={int(count)} brier={brier:.4f} abs_err={abs_err:.3f}"
+    lines = [f"overbet_accuracy: count={int(count)} brier={brier:.4f} abs_err={abs_err:.3f}"]
+    for street in sorted(_OVERBET_ACCURACY_BY_STREET):
+        bucket = _OVERBET_ACCURACY_BY_STREET[street]
+        street_count = bucket.get("count", 0.0)
+        if street_count <= 0:
+            continue
+        street_brier = bucket.get("sum_brier", 0.0) / street_count
+        street_abs = bucket.get("sum_abs", 0.0) / street_count
+        lines.append(
+            f"  street={street} count={int(street_count)} brier={street_brier:.4f} abs_err={street_abs:.3f}"
+        )
+    return "\n".join(lines)
 
 
 def fold_equity_accuracy_summary() -> str:
@@ -538,19 +606,55 @@ def fold_equity_accuracy_summary() -> str:
         return "fold_equity_accuracy: none"
     brier = _FOLD_EQUITY_ACCURACY.get("sum_brier", 0.0) / count
     abs_err = _FOLD_EQUITY_ACCURACY.get("sum_abs", 0.0) / count
-    return f"fold_equity_accuracy: count={int(count)} brier={brier:.4f} abs_err={abs_err:.3f}"
+    lines = [f"fold_equity_accuracy: count={int(count)} brier={brier:.4f} abs_err={abs_err:.3f}"]
+    for street in sorted(_FOLD_EQUITY_ACCURACY_BY_STREET):
+        bucket = _FOLD_EQUITY_ACCURACY_BY_STREET[street]
+        street_count = bucket.get("count", 0.0)
+        if street_count <= 0:
+            continue
+        street_brier = bucket.get("sum_brier", 0.0) / street_count
+        street_abs = bucket.get("sum_abs", 0.0) / street_count
+        lines.append(
+            f"  street={street} count={int(street_count)} brier={street_brier:.4f} abs_err={street_abs:.3f}"
+        )
+    return "\n".join(lines)
 
 
-def record_range_hint_accuracy(strength: float, confidence: float, hero_delta: int) -> None:
+def record_range_hint_accuracy(
+    strength: float,
+    confidence: float,
+    hero_delta: int,
+    street: int,
+    line_key: Optional[str] = None,
+) -> None:
     if confidence <= 0.0:
+        return
+    if confidence < _ACCURACY_MIN_CONFIDENCE:
         return
     actual = 1.0 if hero_delta < 0 else 0.0
     pred = max(0.0, min(1.0, strength))
-    weight = max(0.1, confidence)
+    weight = max(0.1, confidence) * _line_reliability_weight(line_key)
+    if weight <= 0.1:
+        return
     error = pred - actual
     _RANGE_HINT_ACCURACY["count"] += weight
     _RANGE_HINT_ACCURACY["sum_brier"] += weight * error * error
     _RANGE_HINT_ACCURACY["sum_abs"] += weight * abs(error)
+    street_bucket = _RANGE_HINT_ACCURACY_BY_STREET.setdefault(
+        int(street),
+        {"count": 0.0, "sum_brier": 0.0, "sum_abs": 0.0},
+    )
+    street_bucket["count"] += weight
+    street_bucket["sum_brier"] += weight * error * error
+    street_bucket["sum_abs"] += weight * abs(error)
+    if line_key:
+        line_bucket = _RANGE_HINT_ACCURACY_BY_LINE.setdefault(
+            line_key,
+            {"count": 0.0, "sum_brier": 0.0, "sum_abs": 0.0},
+        )
+        line_bucket["count"] += weight
+        line_bucket["sum_brier"] += weight * error * error
+        line_bucket["sum_abs"] += weight * abs(error)
 
 
 def range_hint_accuracy_summary() -> str:
@@ -559,7 +663,49 @@ def range_hint_accuracy_summary() -> str:
         return "range_hint_accuracy: none"
     brier = _RANGE_HINT_ACCURACY.get("sum_brier", 0.0) / count
     abs_err = _RANGE_HINT_ACCURACY.get("sum_abs", 0.0) / count
-    return f"range_hint_accuracy: count={int(count)} brier={brier:.4f} abs_err={abs_err:.3f}"
+    lines = [f"range_hint_accuracy: count={int(count)} brier={brier:.4f} abs_err={abs_err:.3f}"]
+    for street in sorted(_RANGE_HINT_ACCURACY_BY_STREET):
+        bucket = _RANGE_HINT_ACCURACY_BY_STREET[street]
+        street_count = bucket.get("count", 0.0)
+        if street_count <= 0:
+            continue
+        street_brier = bucket.get("sum_brier", 0.0) / street_count
+        street_abs = bucket.get("sum_abs", 0.0) / street_count
+        lines.append(
+            f"  street={street} count={int(street_count)} brier={street_brier:.4f} abs_err={street_abs:.3f}"
+        )
+    for line_key in sorted(_RANGE_HINT_ACCURACY_BY_LINE):
+        bucket = _RANGE_HINT_ACCURACY_BY_LINE[line_key]
+        line_count = bucket.get("count", 0.0)
+        if line_count < _RANGE_HINT_MIN_LINE_OBS:
+            continue
+        line_brier = bucket.get("sum_brier", 0.0) / line_count
+        line_abs = bucket.get("sum_abs", 0.0) / line_count
+        lines.append(
+            f"  line={line_key} count={int(line_count)} brier={line_brier:.4f} abs_err={line_abs:.3f}"
+        )
+    return "\n".join(lines)
+
+
+def _line_reliability_weight(line_key: Optional[str]) -> float:
+    if not line_key:
+        return 1.0
+    bucket = _LINE_OUTCOMES.get(line_key)
+    if not bucket:
+        return 1.0
+    count = bucket.get("count", 0.0)
+    if count < _RANGE_HINT_MIN_LINE_OBS:
+        return 1.0
+    wins = bucket.get("wins", 0.0)
+    losses = bucket.get("losses", 0.0)
+    total = max(1.0, wins + losses)
+    win_rate = wins / total
+    avg_delta = bucket.get("sum_delta", 0.0) / max(1.0, count)
+    if win_rate <= 0.25 and avg_delta < 0:
+        return 0.25
+    if win_rate <= 0.40 and avg_delta < 0:
+        return 0.5
+    return 1.0
 
 
 def _opponent_overbet_adjustments(player, bet_size: int, pot_total: int) -> Tuple[float, float]:
@@ -658,7 +804,7 @@ def opponent_range_strength() -> float:
     return (showdowns["wins"] - showdowns["losses"]) / total
 
 
-def opponent_range_hint() -> Tuple[float, float]:
+def opponent_range_hint(line_key: Optional[str] = None) -> Tuple[float, float]:
     inferred = _OPPONENT_RANGE_MODEL["inferred"]
     inferred_total = inferred["total"]
     if inferred_total > 0:
@@ -673,6 +819,7 @@ def opponent_range_hint() -> Tuple[float, float]:
     else:
         showdown_avg = 0.5
     strength = 0.7 * inferred_avg + 0.3 * showdown_avg
+    strength += _line_prior_adjustment(line_key)
     discard_strength_adj, _, discard_conf = opponent_discard_range_adjustment()
     strength += discard_strength_adj
     strength = max(0.25, min(0.92, strength))
@@ -680,6 +827,43 @@ def opponent_range_hint() -> Tuple[float, float]:
     if discard_conf > 0:
         confidence = max(confidence, 0.4 * discard_conf)
     return strength, confidence
+
+
+def record_line_showdown(line_key: Optional[str], hero_delta: int) -> None:
+    if not line_key:
+        return
+    bucket = _LINE_OUTCOMES.setdefault(
+        line_key,
+        {"count": 0.0, "wins": 0.0, "losses": 0.0, "sum_delta": 0.0},
+    )
+    bucket["count"] += 1.0
+    bucket["sum_delta"] += float(hero_delta)
+    if hero_delta > 0:
+        bucket["wins"] += 1.0
+    elif hero_delta < 0:
+        bucket["losses"] += 1.0
+
+
+def _line_prior_adjustment(line_key: Optional[str]) -> float:
+    if not line_key:
+        return 0.0
+    bucket = _LINE_OUTCOMES.get(line_key)
+    if not bucket:
+        return 0.0
+    count = bucket.get("count", 0.0)
+    if count < _LINE_PRIOR_MIN_OBS:
+        return 0.0
+    wins = bucket.get("wins", 0.0)
+    losses = bucket.get("losses", 0.0)
+    total = max(1.0, wins + losses)
+    win_rate = wins / total
+    avg_delta = bucket.get("sum_delta", 0.0) / max(1.0, count)
+    bias = (0.5 - win_rate) * 0.06
+    if avg_delta < 0:
+        bias += min(0.03, -avg_delta / 2000.0)
+    elif avg_delta > 0:
+        bias -= min(0.02, avg_delta / 3000.0)
+    return max(-0.04, min(0.04, bias))
 
 
 def opponent_discard_range_adjustment() -> Tuple[float, float, float]:
@@ -696,7 +880,8 @@ def opponent_discard_range_adjustment() -> Tuple[float, float, float]:
 
 
 def _opponent_threshold_adjustments(player) -> Tuple[float, float, float, float]:
-    strength, confidence = opponent_range_hint()
+    line_key = getattr(getattr(player, "hero", None), "line_prefix", None)
+    strength, confidence = opponent_range_hint(line_key)
     delta = strength - 0.5
     raise_adj = 0.05 * delta * (0.5 + confidence)
     call_adj = 0.03 * delta * (0.5 + confidence)

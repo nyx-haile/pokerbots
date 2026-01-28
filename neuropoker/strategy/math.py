@@ -156,7 +156,7 @@ _VARIANT_THRESHOLDS = os.environ.get("NEUROPOKER_VARIANT_THRESHOLDS", "0") == "1
 
 _PREFLOP_RAISE_THRESHOLDS = _load_thresholds(
     "NEUROPOKER_PREFLOP_RAISE_THRESHOLDS",
-    (0.7213, 0.6632, 0.5000),
+    (0.7050, 0.6400, 0.4800),
     param_key="preflop_raise_thresholds",
     param_values=_PARAM_VALUES,
 )

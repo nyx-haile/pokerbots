@@ -100,7 +100,8 @@ def _range_conditioned_equity(
             samples=samples,
             max_seconds=max_seconds,
         )
-    strength, confidence = opponent_range_hint()
+    line_key = getattr(getattr(player, "hero", None), "line_prefix", None)
+    strength, confidence = opponent_range_hint(line_key)
     discard_strength_adj, discard_tightness_adj, discard_conf = opponent_discard_range_adjustment()
     strength += discard_strength_adj
     if discard_conf > 0:

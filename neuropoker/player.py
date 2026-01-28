@@ -224,7 +224,7 @@ class Player(Bot):
             if self.hero.delta > 0 and not villain_revealed:
                 strategy.record_opponent_bet_response(
                     self._last_bet_street or 0,
-                    self._last_bet_size,
+                    self._last_bet_delta if self._last_bet_delta is not None else self._last_bet_size,
                     self._last_bet_pot or 1,
                     True,
                 )
@@ -233,11 +233,12 @@ class Player(Bot):
                     self._last_bet_delta if self._last_bet_delta is not None else self._last_bet_size,
                     self._last_bet_pot or 1,
                     True,
+                    self._hero_line_key(),
                 )
             elif villain_revealed:
                 strategy.record_opponent_bet_response(
                     self._last_bet_street or 0,
-                    self._last_bet_size,
+                    self._last_bet_delta if self._last_bet_delta is not None else self._last_bet_size,
                     self._last_bet_pot or 1,
                     False,
                 )
@@ -246,9 +247,11 @@ class Player(Bot):
                     self._last_bet_delta if self._last_bet_delta is not None else self._last_bet_size,
                     self._last_bet_pot or 1,
                     False,
+                    self._hero_line_key(),
                 )
         if self.hero.delta > 0 and not self.villain.hand and self._last_bet_street is not None:
             strategy.record_opponent_fold(self._last_bet_street)
+        end_street = int(self.previous_state.street)
         if self.villain.hand:
             if self.hero.delta > 0:
                 strategy.record_opponent_showdown(False)
@@ -256,12 +259,19 @@ class Player(Bot):
                 strategy.record_opponent_showdown(True)
             if len(self.villain.hand) == 2:
                 strategy.record_inferred_range(stats.two_card_strength(self.villain.hand))
-            strength, confidence = strategy.opponent_range_hint()
-            strategy.record_range_hint_accuracy(strength, confidence, int(self.hero.delta))
+            line_key = self._hero_line_key()
+            strategy.record_line_showdown(line_key, int(self.hero.delta))
+            strength, confidence = strategy.opponent_range_hint(line_key)
+            strategy.record_range_hint_accuracy(
+                strength,
+                confidence,
+                int(self.hero.delta),
+                int(end_street),
+                line_key,
+            )
         if getattr(self.hero, "last_discard_ev", None):
             lumberjack.record_discard_outcome(self.hero.last_discard_ev, int(self.hero.delta))
             self.hero.last_discard_ev = None
-        end_street = int(self.previous_state.street)
         end_bucket = self._leak_stats["end_by_street"].setdefault(
             end_street, {"hands": 0, "delta": 0, "loss": 0}
         )
@@ -400,6 +410,7 @@ class Player(Bot):
             self._last_aggressor = False
 
         self._record_opponent_action_from_state(round_state, hero_index, villain_index)
+        self.hero.line_prefix = self._hero_line_key()
 
         # Only use DiscardAction if it's in legal_actions (which already checks street)
         # legal_actions() returns DiscardAction only when street is 2 or 3
