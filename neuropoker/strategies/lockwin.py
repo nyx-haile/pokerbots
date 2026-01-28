@@ -78,43 +78,64 @@ class DesperatePolicy:
             equity = stats.preflop_strength(hero_hand)
         else:
             samples, max_seconds, discard_samples = core._equity_budget(player)
+            samples, max_seconds, discard_samples = core._adjust_budget_for_turn_raise(
+                player,
+                pot_total,
+                samples,
+                max_seconds,
+                discard_samples,
+            )
             quick_equity = stats.estimate_equity(
                 hero_hand,
                 board_cards,
-                samples=max(5, samples // 4),
-                max_seconds=max_seconds * 0.25,
-                discard_samples=max(2, discard_samples // 2),
+                samples=max(10, samples // 4),
+                max_seconds=min(0.006, max_seconds * 0.25),
+                discard_samples=max(3, discard_samples // 2),
             )
-            # Use full equity calculation for important decisions
-            if abs(quick_equity - pot_odds) < 0.15:
+            # Use full equity calculation for close decisions
+            if abs(quick_equity - pot_odds) < 0.12:
                 equity = stats.estimate_equity(
                     hero_hand,
                     board_cards,
-                    samples=stats._HIGH_VALUE_EQUITY_SAMPLES,
+                    samples=samples,
                     max_seconds=max_seconds,
                     discard_samples=discard_samples,
                 )
             else:
                 equity = quick_equity
 
+        raise_margin = core._raise_margin_by_street(player.street)
+        call_margin = core._call_margin_by_street(player.street)
+        discard_bias = core._opponent_discard_bias(player.street)
+        range_bias = core._opponent_range_bias(player.street)
+        texture_raise, texture_call, raise_cap_mult = core._board_texture_adjustments(board_cards)
+        raise_margin += discard_bias + range_bias + texture_raise
+        call_margin += discard_bias + range_bias + texture_call
+        # Tighten more when desperate
+        call_margin -= core._DESPERATE_CALL_PENALTY
+        raise_margin += core._DESPERATE_RAISE_MARGIN
+        # Lock defense: increase raise threshold when near danger zone
+        raise_margin += core._lock_defense_raise_margin(player)
+
         # Defensive mode: only raise with very strong hands (tunable threshold)
         if RaiseAction in legal_actions:
             min_raise, max_raise = getattr(player.hero, "raise_bounds", (0, 0))
-
-            # Only raise with nut-level equity
-            if equity >= core._DESPERATE_NUT_THRESHOLD and min_raise > 0:
-                # Small value raises only - don't bloat the pot
-                target = min(max_raise, max(min_raise, int(pot_total * 0.5)))
-                return RaiseAction(target)
-
-            # No bluffing when desperate - we can't afford to lose chips
-
-        # Defensive mode: tighter calling using tunable penalty
-        base_call_margin = core._call_margin_by_street(player.street)
-        defensive_call_margin = base_call_margin - core._DESPERATE_CALL_PENALTY
+            raise_threshold = max(core._DESPERATE_NUT_THRESHOLD, pot_odds + raise_margin)
+            raise_cap = max(4, int(pot_total // 2 * raise_cap_mult))
+            if min_raise <= raise_cap and min_raise <= player.hero.stack // 2:
+                if equity >= raise_threshold:
+                    value_mult = core._value_extraction_multiplier(player)
+                    target = int(pot_total * 0.4 * value_mult)
+                    target = min(target, int(pot_total * 0.6))
+                    target = max(min_raise, min(max_raise, target))
+                    target = min(target, raise_cap)
+                    target = core._cap_raise_for_lock_defense(player, target)
+                    fold_rate = core.fold_equity_estimate(None, target, player.street, pot_total)
+                    if target >= min_raise and fold_rate >= 0.25:
+                        return RaiseAction(target)
 
         # Only call if we have good equity relative to pot odds
-        if equity >= pot_odds + defensive_call_margin:
+        if equity >= pot_odds + call_margin:
             if CallAction in legal_actions:
                 return CallAction()
             if CheckAction in legal_actions:
@@ -128,11 +149,6 @@ class DesperatePolicy:
         if equity < pot_odds - 0.05:
             # But use lock defense to avoid giving them win-lock
             return core._avoid_lock_win_fold(player, FoldAction())
-
-        # Borderline - call small bets, fold large ones
-        if continue_cost <= pot_total * 0.20 and equity >= pot_odds - 0.10:
-            if CallAction in legal_actions:
-                return CallAction()
 
         # Default to lock-aware fold
         return core._avoid_lock_win_fold(player, FoldAction())

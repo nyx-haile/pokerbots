@@ -49,6 +49,13 @@ class TightPolicy:
                 max_seconds,
                 discard_samples,
             )
+            samples, max_seconds, discard_samples = core._adjust_budget_for_river_raise(
+                player,
+                pot_total,
+                samples,
+                max_seconds,
+                discard_samples,
+            )
             quick_equity = stats.estimate_equity(
                 hero_hand,
                 board_cards,
@@ -97,6 +104,11 @@ class TightPolicy:
         turn_raise_extra = core._turn_raise_extra(player, pot_total)
         if turn_raise_extra > 0:
             call_margin -= turn_raise_extra
+        river_raise_call_penalty = core._river_raise_call_penalty(player, pot_total)
+        call_margin -= river_raise_call_penalty
+        river_raise_extra = core._river_raise_extra(player, pot_total)
+        if river_raise_extra > 0:
+            call_margin -= river_raise_extra
         if equity >= core._AGGRO_EQUITY:
             raise_margin -= core._AGGRO_RAISE_BONUS
         if core._should_pressure(player, equity):

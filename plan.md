@@ -113,7 +113,7 @@
 - Optionally raise MC samples on turn *only when facing a raise* to reduce variance, while keeping other spots fast.
 
 ### Implemented Mitigation (2026-01-23)
-- Turn raise-call tightening: apply `_RAISE_CALL_PENALTY` only on turn (street 5) when we are facing a raise after our own bet on the same street.
+- Turn raise-call tightening: apply `_RAISE_CALL_PENALTY` only on turn (street 4) when we are facing a raise after our own bet on the same street.
 - Implementation detail: penalty is applied by **reducing** `call_margin` (tightening the call threshold), and only when `continue_cost / pot_total >= _RAISE_CALL_RATIO`.
 - Goal: cut the “bet → face raise → call” frequency that drives turn EV swings.
 - Added a turn raise-response threshold (`_TURN_RAISE_RATIO` + `_TURN_RAISE_EXTRA`) that further tightens calls when a large raise hits on the turn after our bet.

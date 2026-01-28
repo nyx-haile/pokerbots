@@ -51,6 +51,17 @@ class Player(Bot):
         self._last_bet_pot = None
         self._last_bet_street = None
         self._last_aggressor = False
+        self._last_hero_call_street = None
+        self._last_hero_call_street = None
+        self._leak_stats = {
+            "end_by_street": {},
+            "hero_calls": {},
+            "hero_fold_vs_bet": {},
+            "villain_bets": {},
+            "villain_checks": {},
+            "hero_fold_to_raise": {},
+            "river_loss_after_bet": {"count": 0, "delta": 0},
+        }
         self._log(f"init python={sys.version.split()[0]}")
         self._log(f"cwd={os.getcwd()}")
         self._log(f"executable={sys.executable}")
@@ -62,6 +73,68 @@ class Player(Bot):
 
     def _log(self, message: str) -> None:
         print(f"[bot] {message}", flush=True)
+
+    def _pot_total_from_state(self, state: RoundState) -> int:
+        return (STARTING_STACK - state.stacks[0]) + (STARTING_STACK - state.stacks[1])
+
+    def _bump_bucket(self, stats, street: int, bucket: str, delta: int = 1) -> None:
+        street_bucket = stats.setdefault(int(street), {})
+        street_bucket[bucket] = street_bucket.get(bucket, 0) + delta
+
+    def _record_villain_action(self, street: int, action: str, size: int, pot_total: int) -> None:
+        if action == "raise":
+            bucket = strategy._bet_size_bucket(size, pot_total)
+            self._bump_bucket(self._leak_stats["villain_bets"], street, bucket)
+        elif action == "check":
+            self._bump_bucket(self._leak_stats["villain_checks"], street, "check")
+
+    def _leak_summary(self) -> str:
+        lines = ["leak_stats:"]
+        end = self._leak_stats["end_by_street"]
+        for street in sorted(end.keys()):
+            entry = end[street]
+            lines.append(
+                f"  end_street={street} hands={entry.get('hands', 0)} "
+                f"delta={entry.get('delta', 0)} losses={entry.get('loss', 0)}"
+            )
+        calls = self._leak_stats["hero_calls"]
+        for street in sorted(calls.keys()):
+            entry = calls[street]
+            lines.append(
+                f"  hero_calls street={street} calls={entry.get('calls', 0)} "
+                f"wins={entry.get('wins', 0)} losses={entry.get('losses', 0)}"
+            )
+        folds = self._leak_stats["hero_fold_vs_bet"]
+        for street in sorted(folds.keys()):
+            entry = folds[street]
+            lines.append(
+                f"  hero_folds_vs_bet street={street} "
+                f"small={entry.get('small', 0)} medium={entry.get('medium', 0)} large={entry.get('large', 0)}"
+            )
+        bets = self._leak_stats["villain_bets"]
+        for street in sorted(bets.keys()):
+            entry = bets[street]
+            lines.append(
+                f"  villain_bets street={street} "
+                f"small={entry.get('small', 0)} medium={entry.get('medium', 0)} large={entry.get('large', 0)}"
+            )
+        checks = self._leak_stats["villain_checks"]
+        for street in sorted(checks.keys()):
+            entry = checks[street]
+            lines.append(
+                f"  villain_checks street={street} checks={entry.get('check', 0)}"
+            )
+        folds_to_raise = self._leak_stats["hero_fold_to_raise"]
+        for street in sorted(folds_to_raise.keys()):
+            entry = folds_to_raise[street]
+            lines.append(
+                f"  hero_fold_to_raise street={street} count={entry.get('fold_to_raise', 0)}"
+            )
+        river_loss = self._leak_stats["river_loss_after_bet"]
+        lines.append(
+            f"  river_loss_after_bet count={river_loss.get('count', 0)} delta={river_loss.get('delta', 0)}"
+        )
+        return "\n".join(lines)
 
     def _record_opponent_action_from_state(self, round_state, hero_index, villain_index) -> None:
         prev = round_state.previous_state
@@ -91,20 +164,25 @@ class Player(Bot):
         if prev.street != round_state.street:
             if prev_continue_cost > 0:
                 strategy.record_opponent_call(prev.street)
+                self._record_villain_action(prev.street, "call", prev_continue_cost, self._pot_total_from_state(prev))
             else:
-                strategy.record_opponent_action(prev.street)
+                strategy.record_opponent_check(prev.street)
+                self._record_villain_action(prev.street, "check", 0, self._pot_total_from_state(prev))
             return
 
         # Same street: infer by pip delta.
         delta = round_state.pips[prev_actor] - prev.pips[prev_actor]
         if delta <= 0:
             if prev_continue_cost == 0:
-                strategy.record_opponent_action(prev.street)
+                strategy.record_opponent_check(prev.street)
+                self._record_villain_action(prev.street, "check", 0, self._pot_total_from_state(prev))
             return
         if prev_continue_cost > 0 and delta == prev_continue_cost:
             strategy.record_opponent_call(prev.street)
+            self._record_villain_action(prev.street, "call", delta, self._pot_total_from_state(prev))
         else:
             strategy.record_opponent_raise(prev.street)
+            self._record_villain_action(prev.street, "raise", delta, self._pot_total_from_state(prev))
 
     def handle_new_round(self, game_state, round_state, active):
         '''
@@ -196,11 +274,47 @@ class Player(Bot):
             elif self.hero.delta < 0:
                 strategy.record_opponent_showdown(True)
                 strategy.record_inferred_range(1.0)
+        end_street = int(self.previous_state.street)
+        end_bucket = self._leak_stats["end_by_street"].setdefault(
+            end_street, {"hands": 0, "delta": 0, "loss": 0}
+        )
+        end_bucket["hands"] += 1
+        end_bucket["delta"] += int(self.hero.delta)
+        if self.hero.delta < 0:
+            end_bucket["loss"] += 1
+
+        if self._last_hero_call_street in (4, 5):
+            call_bucket = self._leak_stats["hero_calls"].setdefault(
+                int(self._last_hero_call_street),
+                {"calls": 0, "wins": 0, "losses": 0},
+            )
+            call_bucket["calls"] += 1
+            if self.villain.hand:
+                if self.hero.delta > 0:
+                    call_bucket["wins"] += 1
+                elif self.hero.delta < 0:
+                    call_bucket["losses"] += 1
+
+        hero_folded = bool(not self.villain.hand and self.hero.delta < 0)
+        if hero_folded:
+            street = int(self.previous_state.street)
+            continue_cost = self.previous_state.pips[1 - active] - self.previous_state.pips[active]
+            if continue_cost > 0:
+                pot_total = self._pot_total_from_state(self.previous_state)
+                bucket = strategy._bet_size_bucket(continue_cost, pot_total)
+                self._bump_bucket(self._leak_stats["hero_fold_vs_bet"], street, bucket)
+            if self._last_bet_street == street and self._last_bet_size is not None:
+                self._bump_bucket(self._leak_stats["hero_fold_to_raise"], street, "fold_to_raise")
+
+        if end_street == 6 and self.hero.delta < 0 and self._last_bet_street in (4, 5):
+            self._leak_stats["river_loss_after_bet"]["count"] += 1
+            self._leak_stats["river_loss_after_bet"]["delta"] += int(self.hero.delta)
         if self.round_num % 100 == 1:
             self._log(f"round_over={self.round_num} delta={self.hero.delta}")
 
         if game_state.round_num >= NUM_ROUNDS:
             self._log(strategy.policy_summary())
+            self._log(self._leak_summary())
 
         if self.hero.policy_class == DesperatePolicy and self.hero.delta < 0:
             self.hero.enable_desperate = False
@@ -288,6 +402,8 @@ class Player(Bot):
 
         if isinstance(action, DiscardAction):
             self._pending_hero_discard = self.hero.hand[action.card]
+        if isinstance(action, CallAction):
+            self._last_hero_call_street = self.street
         if self.street <= 0:
             bucket = getattr(self.hero, "preflop_bucket", "n/a")
             roll = getattr(self.hero, "preflop_roll", None)

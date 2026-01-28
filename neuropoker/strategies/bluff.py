@@ -12,6 +12,8 @@ class BluffPolicy:
         legal_actions = set(player.hero.legal_actions)
         hero_hand = list(player.hero.hand)
         board_cards = list(player.community)
+        pot_total = max(1, player.hero.pot_total)
+        continue_cost = player.hero.continue_cost
 
         if DiscardAction in legal_actions:
             best_i = _bluff_signal_discard_index(hero_hand, board_cards)
@@ -22,10 +24,19 @@ class BluffPolicy:
 
         if RaiseAction in legal_actions:
             min_raise, max_raise = getattr(player.hero, "raise_bounds", (0, 0))
-            if min_raise > 0:
-                target = core._nut_raise_target(min_raise, max_raise)
-                core._consume_discard_bluff(player)
-                return RaiseAction(target)
+            if min_raise > 0 and continue_cost <= 0:
+                texture_raise, _, raise_cap_mult = core._board_texture_adjustments(board_cards)
+                if texture_raise <= 0.0:
+                    raise_cap = max(4, int(pot_total * 0.5 * raise_cap_mult))
+                    if min_raise <= raise_cap:
+                        target = core._raise_size(pot_total, min_raise, max_raise, equity=0.0, bluff=True)
+                        target = min(target, int(pot_total * 0.4))
+                        target = min(target, raise_cap)
+                        target = core._cap_raise_for_lock_defense(player, target)
+                        fold_rate = core.fold_equity_estimate(None, target, player.street, pot_total)
+                        if target >= min_raise and fold_rate >= 0.35:
+                            core._consume_discard_bluff(player)
+                            return RaiseAction(target)
 
         if CheckAction in legal_actions and player.hero.continue_cost == 0:
             return CheckAction()

@@ -769,8 +769,9 @@ def update_opponent_model(
         model.raise_count += 1
         if street is not None:
             record_opponent_raise(street)
-    if street is not None:
-        record_opponent_action(street)
+    elif action == "check":
+        if street is not None:
+            record_opponent_check(street)
     if inferred_strength is not None:
         record_inferred_range(inferred_strength)
 
@@ -834,6 +835,15 @@ def update_policy_from_round(player: PlayerView) -> None:
     stats_bucket["count"] += 1.0
     stats_bucket["total_delta"] += float(delta)
     stats_bucket["total_reward"] += float(reward)
+    street = getattr(player, "street", None)
+    if street is not None:
+        street_bucket = stats_bucket["per_street"].setdefault(
+            int(street),
+            {"count": 0.0, "total_delta": 0.0, "total_reward": 0.0},
+        )
+        street_bucket["count"] += 1.0
+        street_bucket["total_delta"] += float(delta)
+        street_bucket["total_reward"] += float(reward)
 
 
 def _policy_key(policy_class) -> str:
@@ -852,14 +862,26 @@ def _ensure_policy_stats(policy_class=None) -> None:
         key = _policy_key(policy_class)
         _POLICY_STATS.setdefault(
             key,
-            {"avg": 0.0, "count": 0.0, "total_delta": 0.0, "total_reward": 0.0},
+            {
+                "avg": 0.0,
+                "count": 0.0,
+                "total_delta": 0.0,
+                "total_reward": 0.0,
+                "per_street": {},
+            },
         )
         return
     for cls in _policy_classes():
         key = _policy_key(cls)
         _POLICY_STATS.setdefault(
             key,
-            {"avg": 0.0, "count": 0.0, "total_delta": 0.0, "total_reward": 0.0},
+            {
+                "avg": 0.0,
+                "count": 0.0,
+                "total_delta": 0.0,
+                "total_reward": 0.0,
+                "per_street": {},
+            },
         )
 
 
@@ -874,13 +896,28 @@ def policy_summary() -> str:
         avg_delta = stats_bucket.get("total_delta", 0.0) / count
         avg_reward = stats_bucket.get("total_reward", 0.0) / count
         avg = stats_bucket.get("avg", 0.0)
-        entries.append(
-            f"{key}: hands={int(count)} avg_delta={avg_delta:.2f} avg_reward={avg_reward:.3f} ema_reward={avg:.3f}"
+        header = (
+            f"{key}: hands={int(count)} avg_delta={avg_delta:.2f} "
+            f"avg_reward={avg_reward:.3f} ema_reward={avg:.3f}"
         )
+        per_street = stats_bucket.get("per_street", {})
+        street_lines = []
+        for street, street_bucket in per_street.items():
+            street_count = street_bucket.get("count", 0.0)
+            if street_count <= 0:
+                continue
+            street_avg_delta = street_bucket.get("total_delta", 0.0) / street_count
+            street_avg_reward = street_bucket.get("total_reward", 0.0) / street_count
+            street_lines.append(
+                f"  street={street} hands={int(street_count)} "
+                f"avg_delta={street_avg_delta:.2f} avg_reward={street_avg_reward:.3f}"
+            )
+        street_lines.sort()
+        entries.append("\n".join([header] + street_lines))
     if not entries:
         return "policy_stats: none"
     entries.sort()
-    return "policy_stats: " + " | ".join(entries)
+    return "policy_stats:\n" + "\n".join(entries)
 
 
 def _select_round_policy(player: PlayerView):
@@ -973,6 +1010,15 @@ def _choose_policy_for_round(player: PlayerView, equity: float):
         return tight_cls
     weakness = _opponent_weakness_score(player)
     if weakness >= _bluff_threshold(player) and _bluff_allowed(player):
+        board_cards = list(getattr(player, "community", []))
+        texture_raise, _, _ = _board_texture_adjustments(board_cards)
+        if texture_raise > 0.0:
+            return None
+        fold_rate = _opponent_fold_rate(player.street, None)
+        if fold_rate <= 0.0:
+            return None
+        if fold_rate < _PRESSURE_FOLDRATE_MIN:
+            return None
         return bluff_cls
     return None
 
@@ -1478,7 +1524,7 @@ def _nut_raise_target(min_raise: int, max_raise: int) -> int:
 
 
 def _raise_call_penalty(player: PlayerView, pot_total: int) -> float:
-    if player.street != 5:
+    if player.street != 4:
         return 0.0
     continue_cost = player.hero.continue_cost
     if continue_cost <= 0:
@@ -1493,7 +1539,7 @@ def _raise_call_penalty(player: PlayerView, pot_total: int) -> float:
 
 
 def _turn_raise_extra(player: PlayerView, pot_total: int) -> float:
-    if player.street != 5:
+    if player.street != 4:
         return 0.0
     continue_cost = player.hero.continue_cost
     if continue_cost <= 0:
@@ -1879,24 +1925,20 @@ def fold_equity_estimate(player_id, bet_size: int, street: int, pot_total: int) 
 def record_opponent_raise(street: int) -> None:
     bucket = _OPPONENT_RANGE_MODEL["by_street"].setdefault(
         street,
-        {"raises": 0.0, "calls": 0.0, "folds": 0.0, "total": 0.0},
+        {"raises": 0.0, "calls": 0.0, "folds": 0.0, "checks": 0.0, "total": 0.0},
     )
     bucket["raises"] += 1.0
     bucket["total"] += 1.0
 
 
 def record_opponent_action(street: int) -> None:
-    bucket = _OPPONENT_RANGE_MODEL["by_street"].setdefault(
-        street,
-        {"raises": 0.0, "calls": 0.0, "folds": 0.0, "total": 0.0},
-    )
-    bucket["total"] += 1.0
+    record_opponent_check(street)
 
 
 def record_opponent_call(street: int) -> None:
     bucket = _OPPONENT_RANGE_MODEL["by_street"].setdefault(
         street,
-        {"raises": 0.0, "calls": 0.0, "folds": 0.0, "total": 0.0},
+        {"raises": 0.0, "calls": 0.0, "folds": 0.0, "checks": 0.0, "total": 0.0},
     )
     bucket["calls"] += 1.0
     bucket["total"] += 1.0
@@ -1905,10 +1947,18 @@ def record_opponent_call(street: int) -> None:
 def record_opponent_fold(street: int) -> None:
     bucket = _OPPONENT_RANGE_MODEL["by_street"].setdefault(
         street,
-        {"raises": 0.0, "calls": 0.0, "folds": 0.0, "total": 0.0},
+        {"raises": 0.0, "calls": 0.0, "folds": 0.0, "checks": 0.0, "total": 0.0},
     )
     bucket["folds"] += 1.0
     bucket["total"] += 1.0
+
+
+def record_opponent_check(street: int) -> None:
+    bucket = _OPPONENT_RANGE_MODEL["by_street"].setdefault(
+        street,
+        {"raises": 0.0, "calls": 0.0, "folds": 0.0, "checks": 0.0, "total": 0.0},
+    )
+    bucket["checks"] += 1.0
 
 
 def record_inferred_range(strength: float) -> None:
@@ -1927,6 +1977,7 @@ def decay_range_model() -> None:
         bucket["raises"] *= _RANGE_MODEL_DECAY
         bucket["calls"] *= _RANGE_MODEL_DECAY
         bucket["folds"] *= _RANGE_MODEL_DECAY
+        bucket["checks"] *= _RANGE_MODEL_DECAY
         bucket["total"] *= _RANGE_MODEL_DECAY
     _OPPONENT_RANGE_MODEL["showdowns"]["wins"] *= _RANGE_MODEL_DECAY
     _OPPONENT_RANGE_MODEL["showdowns"]["losses"] *= _RANGE_MODEL_DECAY
@@ -2071,7 +2122,7 @@ def _equity_budget(player: PlayerView) -> Tuple[int, float, int]:
 
 
 def _turn_raise_ratio(player: PlayerView, pot_total: int) -> Optional[float]:
-    if player.street != 5:
+    if player.street != 4:
         return None
     continue_cost = player.hero.continue_cost
     if continue_cost <= 0:
@@ -2090,6 +2141,66 @@ def _adjust_budget_for_turn_raise(
     discard_samples: int,
 ) -> Tuple[int, float, int]:
     ratio = _turn_raise_ratio(player, pot_total)
+    if ratio is None or ratio < _TURN_RAISE_RATIO:
+        return samples, max_seconds, discard_samples
+    sample_mult = max(1.0, _TURN_RAISE_SAMPLE_MULT)
+    time_mult = max(1.0, _TURN_RAISE_TIME_MULT)
+    samples = min(200, int(samples * sample_mult))
+    max_seconds = min(0.05, max_seconds * time_mult)
+    discard_samples = min(30, max(4, int(discard_samples * 1.2)))
+    return samples, max_seconds, discard_samples
+
+
+def _river_raise_call_penalty(player: PlayerView, pot_total: int) -> float:
+    if player.street != 5:
+        return 0.0
+    continue_cost = player.hero.continue_cost
+    if continue_cost <= 0:
+        return 0.0
+    last_bet_street = getattr(player, "_last_bet_street", None)
+    if last_bet_street != player.street:
+        return 0.0
+    ratio = continue_cost / float(max(1, pot_total))
+    if ratio < _RAISE_CALL_RATIO:
+        return 0.0
+    return _RAISE_CALL_PENALTY
+
+
+def _river_raise_extra(player: PlayerView, pot_total: int) -> float:
+    if player.street != 5:
+        return 0.0
+    continue_cost = player.hero.continue_cost
+    if continue_cost <= 0:
+        return 0.0
+    last_bet_street = getattr(player, "_last_bet_street", None)
+    if last_bet_street != player.street:
+        return 0.0
+    ratio = continue_cost / float(max(1, pot_total))
+    if ratio < _TURN_RAISE_RATIO:
+        return 0.0
+    return _TURN_RAISE_EXTRA
+
+
+def _river_raise_ratio(player: PlayerView, pot_total: int) -> Optional[float]:
+    if player.street != 5:
+        return None
+    continue_cost = player.hero.continue_cost
+    if continue_cost <= 0:
+        return None
+    last_bet_street = getattr(player, "_last_bet_street", None)
+    if last_bet_street != player.street:
+        return None
+    return continue_cost / float(max(1, pot_total))
+
+
+def _adjust_budget_for_river_raise(
+    player: PlayerView,
+    pot_total: int,
+    samples: int,
+    max_seconds: float,
+    discard_samples: int,
+) -> Tuple[int, float, int]:
+    ratio = _river_raise_ratio(player, pot_total)
     if ratio is None or ratio < _TURN_RAISE_RATIO:
         return samples, max_seconds, discard_samples
     sample_mult = max(1.0, _TURN_RAISE_SAMPLE_MULT)
