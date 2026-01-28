@@ -2,6 +2,9 @@
 import os
 import random
 import time
+import math
+from collections import OrderedDict
+from bisect import bisect_left
 from itertools import combinations
 from functools import lru_cache
 import pkrbot
@@ -88,6 +91,9 @@ _DEFAULT_EQUITY_SAMPLES = 2500
 _HIGH_VALUE_EQUITY_SAMPLES = 10_000
 _DEFAULT_EQUITY_SECONDS = 0.05
 
+_DISCARD_EQUITY_STATE_CACHE = OrderedDict()
+_DISCARD_EQUITY_STATE_CACHE_LIMIT = 2048
+
 class DeckEmptyException(Exception):
     pass
 
@@ -106,6 +112,30 @@ def _ensure_str_cards(cards):
     if not cards:
         return []
     return [_card_to_str(card) for card in cards]
+
+
+def _discard_cache_key(hole, board) -> Tuple[Tuple[int, ...], Tuple[int, ...]]:
+    return (tuple(hole), tuple(board))
+
+
+def _discard_cache_get(key, min_samples: Optional[int]):
+    entry = _DISCARD_EQUITY_STATE_CACHE.get(key)
+    if entry is None:
+        return None
+    equities, samples = entry
+    if min_samples is None or samples >= min_samples:
+        _DISCARD_EQUITY_STATE_CACHE.move_to_end(key)
+        return equities
+    return None
+
+
+def _discard_cache_set(key, equities, samples: int) -> None:
+    if samples <= 0:
+        return
+    _DISCARD_EQUITY_STATE_CACHE[key] = (equities, int(samples))
+    _DISCARD_EQUITY_STATE_CACHE.move_to_end(key)
+    if len(_DISCARD_EQUITY_STATE_CACHE) > _DISCARD_EQUITY_STATE_CACHE_LIMIT:
+        _DISCARD_EQUITY_STATE_CACHE.popitem(last=False)
 
 _CHEN_HIGH = {
     14: 10.0,
@@ -199,6 +229,109 @@ def preflop_strength(hole_cards: Sequence[Union[str, int]]) -> float:
     cards = _ensure_int_cards(list(hole_cards))
     cards.sort()
     return _preflop_strength_cached(tuple(cards))
+
+
+@lru_cache(maxsize=200_000)
+def _two_card_strength_cached(cards_tuple: Tuple[int, ...]) -> float:
+    cards = list(cards_tuple)
+    if len(cards) != 2:
+        return 0.5
+    ranks = [Card.get_rank_int(card) + 2 for card in cards]
+    suits = [Card.get_suit_int(card) for card in cards]
+    rank_high = max(ranks)
+    rank_low = min(ranks)
+    suited = suits[0] == suits[1]
+    score = _chen_score(rank_high, rank_low, suited)
+    strength = score / 20.0
+    return max(0.0, min(1.0, strength))
+
+
+def two_card_strength(hole_cards: Sequence[Union[str, int]]) -> float:
+    cards = _ensure_int_cards(list(hole_cards))
+    cards.sort()
+    return _two_card_strength_cached(tuple(cards))
+
+
+@lru_cache(maxsize=4096)
+def _build_opponent_range_cached(
+    known_tuple: Tuple[int, ...],
+    target_strength: float,
+    tightness: float,
+    mix_uniform: float,
+) -> Tuple[Tuple[Tuple[str, str], float], ...]:
+    known = set(known_tuple)
+    deck = [card for card in _FULL_DECK if card not in known]
+    target_strength = max(0.05, min(0.95, target_strength))
+    tightness = max(0.0, min(1.0, tightness))
+    mix_uniform = max(0.0, min(0.7, mix_uniform))
+    sigma = max(0.08, 0.35 - 0.25 * tightness)
+    entries = []
+    for hand in combinations(deck, 2):
+        strength = two_card_strength(hand)
+        gauss = math.exp(-((strength - target_strength) ** 2) / (2 * sigma * sigma))
+        weight = (1.0 - mix_uniform) * gauss + mix_uniform
+        entries.append((hand, weight))
+    return tuple(entries)
+
+
+def build_opponent_range(
+    known_cards: Sequence[Union[str, int]],
+    target_strength: float = 0.5,
+    tightness: float = 0.5,
+    mix_uniform: float = 0.2,
+) -> List[Tuple[Tuple[str, str], float]]:
+    known = _ensure_int_cards(list(known_cards))
+    known.sort()
+    return list(
+        _build_opponent_range_cached(
+            tuple(known),
+            round(float(target_strength), 2),
+            round(float(tightness), 2),
+            round(float(mix_uniform), 2),
+        )
+    )
+
+
+def _parse_hand_entry(hand_entry) -> Optional[Tuple[str, str]]:
+    if isinstance(hand_entry, str):
+        compact = hand_entry.replace(" ", "")
+        if len(compact) == 4:
+            return (compact[:2], compact[2:])
+        return None
+    if isinstance(hand_entry, (list, tuple)) and len(hand_entry) == 2:
+        return (_card_to_str(hand_entry[0]), _card_to_str(hand_entry[1]))
+    return None
+
+
+def _normalize_opponent_range(
+    opponent_range,
+    known_cards: Sequence[Union[str, int]],
+) -> List[Tuple[Tuple[str, str], float]]:
+    known = set(_ensure_int_cards(list(known_cards)))
+    if opponent_range is None:
+        return build_opponent_range(known_cards, target_strength=0.5, tightness=0.0, mix_uniform=1.0)
+    entries: List[Tuple[Tuple[str, str], float]] = []
+    if isinstance(opponent_range, dict):
+        items = opponent_range.items()
+    else:
+        items = opponent_range
+    for item in items:
+        weight = 1.0
+        hand_entry = item
+        if isinstance(item, (list, tuple)) and len(item) == 2 and isinstance(item[1], (int, float)):
+            hand_entry = item[0]
+            weight = float(item[1])
+        hand = _parse_hand_entry(hand_entry)
+        if not hand:
+            continue
+        if weight <= 0:
+            continue
+        if hand[0] in known or hand[1] in known:
+            continue
+        entries.append((hand, weight))
+    if not entries:
+        return build_opponent_range(known_cards, target_strength=0.5, tightness=0.0, mix_uniform=1.0)
+    return entries
 
 def _pokerstove_best_eval(cards):
     str_cards = _ensure_str_cards(cards)
@@ -373,11 +506,33 @@ def discard_equity(
     elif remaining < float('inf'):
         max_seconds = remaining
 
+    cache_key = _discard_cache_key(hole, board)
+    if not return_metadata:
+        cached = _discard_cache_get(cache_key, n_samples)
+        if cached is not None:
+            return cached
+
     # Use cached path when no time limit specified and timer isn't critical
     if n_samples is not None and n_samples > 0 and (max_seconds is None or max_seconds == 0):
         if not return_metadata:
-            return _discard_equity_cached(tuple(hole), tuple(board), int(n_samples))
-    return _discard_equity_impl(hole, board, n_samples=n_samples, max_seconds=max_seconds, return_metadata=return_metadata)
+            equities = _discard_equity_cached(tuple(hole), tuple(board), int(n_samples))
+            _discard_cache_set(cache_key, equities, int(n_samples))
+            return equities
+    result = _discard_equity_impl(
+        hole,
+        board,
+        n_samples=n_samples,
+        max_seconds=max_seconds,
+        return_metadata=return_metadata,
+        return_samples=True,
+    )
+    if return_metadata:
+        equities, metadata, samples_used = result
+        _discard_cache_set(cache_key, equities, samples_used)
+        return equities, metadata
+    equities, samples_used = result
+    _discard_cache_set(cache_key, equities, samples_used)
+    return equities
 
 
 def _discard_equity_impl(
@@ -386,6 +541,7 @@ def _discard_equity_impl(
     n_samples: Optional[int] = None,
     max_seconds: Optional[float] = None,
     return_metadata: bool = False,
+    return_samples: bool = False,
 ) -> tuple:
     known = set(hole + board)
 
@@ -399,11 +555,22 @@ def _discard_equity_impl(
     deck = [card for card in full_deck if card not in known]
 
     if needed > len(deck):
-        return _enumerate_discard_equity(hole, board, deck, remaining_cards)
+        equities = _enumerate_discard_equity(hole, board, deck, remaining_cards)
+        if return_samples:
+            samples_used = n_samples if n_samples is not None else _DEFAULT_DISCARD_SAMPLES
+            if return_metadata:
+                return equities, [], samples_used
+            return equities, samples_used
+        return equities
 
     samples_limit = n_samples if n_samples is not None else _DEFAULT_DISCARD_SAMPLES
     if samples_limit <= 0:
-        return _enumerate_discard_equity(hole, board, deck, remaining_cards)
+        equities = _enumerate_discard_equity(hole, board, deck, remaining_cards)
+        if return_samples:
+            if return_metadata:
+                return equities, [], samples_limit
+            return equities, samples_limit
+        return equities
 
     if max_seconds is None:
         max_seconds = _DEFAULT_DISCARD_SECONDS
@@ -503,7 +670,12 @@ def _discard_equity_impl(
         samples += 1
 
     if samples == 0:
-        return _enumerate_discard_equity(hole, board, deck, remaining_cards)
+        equities = _enumerate_discard_equity(hole, board, deck, remaining_cards)
+        if return_samples:
+            if return_metadata:
+                return equities, [], samples_limit
+            return equities, samples_limit
+        return equities
 
     equities = []
     metadata = []
@@ -517,9 +689,14 @@ def _discard_equity_impl(
         equities.append((totals["wins"] + 0.5 * totals["ties"]) / total)
         metadata.append({"discard": discard, "samples": totals["samples"]})
 
+    equities = tuple(equities)
     if return_metadata:
-        return tuple(equities), metadata
-    return tuple(equities)
+        if return_samples:
+            return equities, metadata, samples
+        return equities, metadata
+    if return_samples:
+        return equities, samples
+    return equities
 
 
 def _choose_opp_discard(cards: Iterable[str]) -> str:
@@ -726,7 +903,13 @@ def _mc_equity_serial(
 
 
 
-def estimate_showdown_equity(my_hand, opponent_range, community_cards):
+def estimate_showdown_equity(
+    my_hand,
+    opponent_range,
+    community_cards,
+    samples: Optional[int] = None,
+    max_seconds: Optional[float] = None,
+) -> float:
     """
     Estimate hero equity at showdown vs opponent range.
 
@@ -735,18 +918,148 @@ def estimate_showdown_equity(my_hand, opponent_range, community_cards):
     - opponent_range: distribution over opponent 2-card hands
     - community_cards: current board (may be partial)
     """
-    raise NotImplementedError
+    if samples is None:
+        samples = _DEFAULT_EQUITY_SAMPLES
+    if max_seconds is None:
+        max_seconds = _DEFAULT_EQUITY_SECONDS
+    remaining = _time_remaining()
+    if remaining < float('inf'):
+        max_seconds = min(max_seconds, remaining)
+
+    hero_int = _ensure_int_cards(list(my_hand))
+    board_int = _ensure_int_cards(list(community_cards))
+    if len(hero_int) != 2:
+        return estimate_equity(hero_int, board_int, samples=samples, max_seconds=max_seconds)
+
+    known = hero_int + board_int
+    opponent_entries = _normalize_opponent_range(opponent_range, known)
+    if not opponent_entries:
+        return 0.5
+    deck = [card for card in _FULL_DECK if card not in set(known)]
+    remaining_board = max(0, 6 - len(board_int))
+    if remaining_board + 2 > len(deck):
+        return 0.5
+
+    weights = []
+    hands = []
+    total_weight = 0.0
+    for hand, weight in opponent_entries:
+        if hand[0] in known or hand[1] in known:
+            continue
+        if weight <= 0:
+            continue
+        hands.append(hand)
+        total_weight += weight
+        weights.append(total_weight)
+    if not hands or total_weight <= 0:
+        return 0.5
+
+    seed = _equity_seed(tuple(hero_int), tuple(board_int), int(samples), float(max_seconds), len(hands))
+    rng = random.Random(seed)
+    wins = losses = ties = runs = 0
+    start_time = time.perf_counter()
+    eval_best = evaluate_best
+    compare = compare_evals
+    for i in range(samples):
+        if i % 25 == 0:
+            if max_seconds > 0 and time.perf_counter() - start_time >= max_seconds:
+                break
+            if _should_abort():
+                break
+        pick = rng.random() * total_weight
+        idx = bisect_left(weights, pick)
+        opp_hand = hands[idx]
+        if remaining_board > 0:
+            opp_set = {opp_hand[0], opp_hand[1]}
+            remaining_deck = [card for card in deck if card not in opp_set]
+            if remaining_board > len(remaining_deck):
+                continue
+            board_fill = rng.sample(remaining_deck, remaining_board)
+            final_board = board_int + board_fill
+        else:
+            final_board = board_int
+        hero_rank = eval_best(final_board, hero_int)
+        villain_rank = eval_best(final_board, list(opp_hand))
+        result = compare(hero_rank, villain_rank)
+        if result > 0:
+            wins += 1
+        elif result < 0:
+            losses += 1
+        else:
+            ties += 1
+        runs += 1
+    if runs <= 0:
+        return 0.5
+    return (wins + 0.5 * ties) / runs
 
 
 def equity_given_future_discard(my_hand, opponent_range, board, discard_policy):
     """
     Evaluate pre-discard equity integrating over future discard behavior.
     """
-    raise NotImplementedError
+    hero_hand = _ensure_int_cards(list(my_hand))
+    board_cards = _ensure_int_cards(list(board))
+    if len(hero_hand) != 3:
+        return estimate_showdown_equity(hero_hand, opponent_range, board_cards)
+
+    weights = [1.0, 1.0, 1.0]
+    if discard_policy is not None:
+        try:
+            policy_result = discard_policy(hero_hand, board_cards, opponent_range)
+        except TypeError:
+            policy_result = discard_policy(hero_hand, board_cards)
+        if isinstance(policy_result, int):
+            weights = [0.0, 0.0, 0.0]
+            if 0 <= policy_result < len(weights):
+                weights[policy_result] = 1.0
+        elif isinstance(policy_result, (list, tuple)) and len(policy_result) == 3:
+            weights = [float(w) for w in policy_result]
+        elif isinstance(policy_result, dict):
+            weights = [float(policy_result.get(idx, 0.0)) for idx in range(3)]
+
+    total_weight = sum(w for w in weights if w > 0)
+    if total_weight <= 0:
+        return 0.5
+
+    expected = 0.0
+    for idx, weight in enumerate(weights):
+        if weight <= 0:
+            continue
+        keep = [card for j, card in enumerate(hero_hand) if j != idx]
+        discard_card = hero_hand[idx]
+        equity = estimate_showdown_equity(keep, opponent_range, board_cards + [discard_card])
+        expected += weight * equity
+    return expected / total_weight
 
 
 def expected_discarded_card_value(hero_hand, opponent_range, board, action_context):
     """
     Return EV by candidate discard, accounting for retention, externality, and info effects.
     """
-    raise NotImplementedError
+    hero_hand = _ensure_int_cards(list(hero_hand))
+    board_cards = _ensure_int_cards(list(board))
+    if len(hero_hand) != 3:
+        return []
+    info_penalty = 0.0
+    samples = None
+    max_seconds = None
+    if isinstance(action_context, dict):
+        info_penalty = float(action_context.get("info_penalty", 0.0))
+        samples = action_context.get("samples")
+        max_seconds = action_context.get("max_seconds")
+
+    values = []
+    for idx in range(3):
+        keep = [card for j, card in enumerate(hero_hand) if j != idx]
+        discard_card = hero_hand[idx]
+        equity = estimate_showdown_equity(
+            keep,
+            opponent_range,
+            board_cards + [discard_card],
+            samples=samples,
+            max_seconds=max_seconds,
+        )
+        rank = Card.get_rank_int(discard_card) + 2
+        equity -= info_penalty * (rank / 14.0)
+        values.append(equity)
+    return values

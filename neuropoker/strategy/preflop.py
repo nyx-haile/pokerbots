@@ -7,7 +7,7 @@ from skeleton.actions import CallAction, CheckAction, FoldAction, RaiseAction
 
 from .core import PlayerView
 from .math import _PREFLOP_CALL_THRESHOLDS, _PREFLOP_RAISE_THRESHOLDS, _raise_size
-from .models import _value_extraction_multiplier
+from .models import _value_extraction_multiplier, opponent_range_hint, _opponent_fold_rate
 
 
 def _preflop_open_decision(
@@ -21,8 +21,18 @@ def _preflop_open_decision(
 ):
     roll = _preflop_roll(player)
     effective_equity, stack_ratio = _preflop_position_stack_adjustments(player, equity, pot_total)
+    strength_hint, confidence = opponent_range_hint()
+    fold_rate = _opponent_fold_rate(0, None)
+    if fold_rate > 0.0:
+        fold_rate = min(0.35, fold_rate)
+    else:
+        fold_rate = 0.0
+    strength_bias = (strength_hint - 0.5) * 0.06 * confidence
+    fold_bias = (fold_rate - 0.2) * 0.04
+    effective_equity = max(0.0, min(1.0, effective_equity - strength_bias + fold_bias))
     raise_strong, raise_medium, raise_light = _PREFLOP_RAISE_THRESHOLDS
     call_strong, call_medium, call_light = _PREFLOP_CALL_THRESHOLDS
+    pos_raise_scale = 1.1 if not getattr(player.hero, "blind", False) else 0.9
     if RaiseAction in legal_actions:
         if effective_equity >= raise_strong:
             raise_prob = 0.7
@@ -39,6 +49,7 @@ def _preflop_open_decision(
         if effective_equity < pot_odds:
             raise_prob *= 0.5
         raise_prob *= _preflop_raise_stack_scale(stack_ratio)
+        raise_prob *= pos_raise_scale
         if raise_prob > 0 and roll < raise_prob:
             _set_preflop_debug(player, bucket, roll)
             value_mult = _value_extraction_multiplier(player)

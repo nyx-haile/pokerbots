@@ -1,6 +1,7 @@
 from skeleton.actions import CallAction, CheckAction, DiscardAction, FoldAction, RaiseAction
 
 import lumberjack
+import random
 import stats
 from strategy import policy_api as core
 
@@ -21,13 +22,15 @@ class BluffPolicy:
             return action
 
         if DiscardAction in legal_actions:
-            best_i = _bluff_signal_discard_index(hero_hand, board_cards)
+            best_i = _neutral_discard_index(hero_hand, board_cards)
+            player.hero.last_discard_ev = None
             player.hero.last_discard = hero_hand[best_i]
             player.hero.last_discard_visible = player.hero.blind
             player.hero.discard_bluff = True
             return _record(DiscardAction(best_i))
 
         if RaiseAction in legal_actions:
+            suppression = core._discard_bluff_suppression(player)
             min_raise, max_raise = getattr(player.hero, "raise_bounds", (0, 0))
             if min_raise > 0 and continue_cost <= 0:
                 texture_raise, _, raise_cap_mult = core._board_texture_adjustments(board_cards)
@@ -39,7 +42,9 @@ class BluffPolicy:
                         target = min(target, raise_cap)
                         target = core._cap_raise_for_lock_defense(player, target)
                         fold_rate = core.fold_equity_estimate(None, target, player.street, pot_total)
-                        if target >= min_raise and fold_rate >= 0.35:
+                        if suppression > 0.0 and random.random() < suppression:
+                            pass
+                        elif target >= min_raise and fold_rate >= 0.35:
                             core._consume_discard_bluff(player)
                             return _record(RaiseAction(target))
 
@@ -52,7 +57,7 @@ class BluffPolicy:
         return _record(FoldAction())
 
 
-def _bluff_signal_discard_index(hero_hand, board_cards):
+def _neutral_discard_index(hero_hand, board_cards):
     if not hero_hand:
         return 0
     cards_int = stats._ensure_int_cards(list(hero_hand))
@@ -63,12 +68,12 @@ def _bluff_signal_discard_index(hero_hand, board_cards):
     for card in cards_int:
         rank = stats.Card.get_rank_int(card)
         suit = stats.Card.get_suit_int(card)
-        score = rank
-        if rank >= 8:
-            score += 1
+        score = abs(rank - 6)
+        if rank <= 2 or rank >= 10:
+            score += 1.5
         if rank in board_ranks:
-            score += 5
+            score += 2.5
         if board_suits.count(suit) >= 2:
-            score += 3
+            score += 2.0
         scores.append(score)
-    return max(range(len(scores)), key=scores.__getitem__)
+    return min(range(len(scores)), key=scores.__getitem__)

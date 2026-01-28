@@ -131,6 +131,8 @@ class Player(Bot):
             self._record_villain_action(prev.street, "call", delta, self._pot_total_from_state(prev))
         else:
             strategy.record_opponent_raise(prev.street)
+            strategy.record_overbet_observation(prev.street, delta, self._pot_total_from_state(prev))
+            strategy.record_opponent_bet_size(prev.street, delta, self._pot_total_from_state(prev))
             self._record_villain_action(prev.street, "raise", delta, self._pot_total_from_state(prev))
 
     def handle_new_round(self, game_state, round_state, active):
@@ -167,6 +169,7 @@ class Player(Bot):
         self._last_bet_street = None
         self._last_aggressor = False
         strategy.begin_round(self)
+        self.hero.last_discard_ev = None
         if self.round_num % 100 == 1:
             lumberjack.log(f"round={self.round_num} bankroll={self.hero.bankroll} clock={self.game_clock:.2f}")
 
@@ -219,10 +222,13 @@ class Player(Bot):
         if self.villain.hand:
             if self.hero.delta > 0:
                 strategy.record_opponent_showdown(False)
-                strategy.record_inferred_range(0.0)
             elif self.hero.delta < 0:
                 strategy.record_opponent_showdown(True)
-                strategy.record_inferred_range(1.0)
+            if len(self.villain.hand) == 2:
+                strategy.record_inferred_range(stats.two_card_strength(self.villain.hand))
+        if getattr(self.hero, "last_discard_ev", None):
+            lumberjack.record_discard_outcome(self.hero.last_discard_ev, int(self.hero.delta))
+            self.hero.last_discard_ev = None
         end_street = int(self.previous_state.street)
         end_bucket = self._leak_stats["end_by_street"].setdefault(
             end_street, {"hands": 0, "delta": 0, "loss": 0}
@@ -266,6 +272,9 @@ class Player(Bot):
             lumberjack.log(lumberjack.leak_summary(self._leak_stats))
             lumberjack.log(lumberjack.policy_action_summary())
             lumberjack.log(lumberjack.equity_vs_pot_odds_summary())
+            lumberjack.log(lumberjack.discard_ev_summary())
+            lumberjack.log(strategy.opponent_overbet_summary())
+            lumberjack.log(strategy.overbet_accuracy_summary())
 
         if self.hero.policy_class == DesperatePolicy and self.hero.delta < 0:
             self.hero.enable_desperate = False

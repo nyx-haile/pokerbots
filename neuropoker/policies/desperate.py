@@ -50,6 +50,12 @@ class DesperatePolicy:
                 opponent_discard=opponent_discard,
                 board_cards=board_cards,
             )
+            player.hero.last_discard_ev = lumberjack.record_discard_decision(
+                "DesperatePolicy",
+                player.street,
+                equities,
+                best_i,
+            )
             player.hero.last_discard = hero_hand[best_i]
             player.hero.last_discard_visible = player.hero.blind
             player.hero.discard_bluff = False
@@ -72,29 +78,29 @@ class DesperatePolicy:
                 discard_samples,
             )
             force_full_equity = core._is_large_raise(player, pot_total)
-            quick_equity = stats.estimate_equity(
+            quick_equity = core._range_conditioned_equity(
+                player,
                 hero_hand,
                 board_cards,
                 samples=max(10, samples // 4),
                 max_seconds=min(0.006, max_seconds * 0.25),
-                discard_samples=max(3, discard_samples // 2),
             )
             # Use full equity calculation for close decisions
             if force_full_equity:
-                equity = stats.estimate_equity(
+                equity = core._range_conditioned_equity(
+                    player,
                     hero_hand,
                     board_cards,
                     samples=samples,
                     max_seconds=max_seconds,
-                    discard_samples=discard_samples,
                 )
             elif abs(quick_equity - pot_odds) < 0.12:
-                equity = stats.estimate_equity(
+                equity = core._range_conditioned_equity(
+                    player,
                     hero_hand,
                     board_cards,
                     samples=samples,
                     max_seconds=max_seconds,
-                    discard_samples=discard_samples,
                 )
             else:
                 equity = quick_equity
@@ -106,6 +112,17 @@ class DesperatePolicy:
         texture_raise, texture_call, raise_cap_mult = core._board_texture_adjustments(board_cards)
         raise_margin += discard_bias + range_bias + texture_raise
         call_margin += discard_bias + range_bias + texture_call
+        opp_raise_adj, opp_call_adj, opp_river_raise_adj, opp_river_floor_adj = core._opponent_threshold_adjustments(player)
+        raise_margin += opp_raise_adj
+        call_margin += opp_call_adj
+        if player.hero.continue_cost > 0 and pot_total > 0:
+            call_overbet_adj, raise_overbet_adj = core._opponent_overbet_adjustments(
+                player,
+                player.hero.continue_cost,
+                pot_total,
+            )
+            call_margin += call_overbet_adj
+            raise_margin += raise_overbet_adj
         # Tighten more when desperate
         call_margin -= core._DESPERATE_CALL_PENALTY
         raise_margin += core._DESPERATE_RAISE_MARGIN
@@ -119,6 +136,8 @@ class DesperatePolicy:
         if RaiseAction in legal_actions:
             min_raise, max_raise = getattr(player.hero, "raise_bounds", (0, 0))
             raise_threshold = max(core._DESPERATE_NUT_THRESHOLD, pot_odds + raise_margin)
+            if core.is_river(player.street):
+                raise_threshold += opp_river_raise_adj
             raise_cap = max(4, int(pot_total // 2 * raise_cap_mult))
             if min_raise <= raise_cap and min_raise <= player.hero.stack // 3:
                 if equity >= raise_threshold:

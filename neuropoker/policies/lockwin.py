@@ -23,6 +23,7 @@ class LockWinPolicy:
             return action
 
         if DiscardAction in legal_actions:
+            player.hero.last_discard_ev = None
             return _record(DiscardAction(0))
         if FoldAction in legal_actions and player.hero.continue_cost > 0:
             return _record(FoldAction())

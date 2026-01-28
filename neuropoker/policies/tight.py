@@ -43,6 +43,12 @@ class TightPolicy:
                 opponent_discard=opponent_discard,
                 board_cards=board_cards,
             )
+            player.hero.last_discard_ev = lumberjack.record_discard_decision(
+                "TightPolicy",
+                player.street,
+                equities,
+                best_i,
+            )
             player.hero.last_discard = hero_hand[best_i]
             player.hero.last_discard_visible = player.hero.blind
             player.hero.discard_bluff = False
@@ -69,12 +75,14 @@ class TightPolicy:
                 discard_samples,
             )
             force_full_equity = core._is_large_raise(player, pot_total)
-            quick_equity = stats.estimate_equity(
+            if core.is_river(player.street) and (player.hero.continue_cost > 0 or RaiseAction in legal_actions):
+                force_full_equity = True
+            quick_equity = core._range_conditioned_equity(
+                player,
                 hero_hand,
                 board_cards,
                 samples=max(20, samples // 4),
                 max_seconds=min(0.006, max_seconds * 0.2),
-                discard_samples=max(4, discard_samples // 2),
             )
             equity = quick_equity
 
@@ -97,6 +105,9 @@ class TightPolicy:
         call_margin += discard_bias
         raise_margin += range_bias
         call_margin += range_bias
+        opp_raise_adj, opp_call_adj, opp_river_raise_adj, opp_river_floor_adj = core._opponent_threshold_adjustments(player)
+        raise_margin += opp_raise_adj
+        call_margin += opp_call_adj
         raise_margin += raise_variant
         call_margin += call_variant
         
@@ -114,6 +125,23 @@ class TightPolicy:
             call_margin -= policy_bias
         raise_margin += texture_raise
         call_margin += texture_call
+        if player.hero.continue_cost > 0 and pot_total > 0:
+            ratio = player.hero.continue_cost / float(pot_total)
+            if ratio >= 1.0:
+                call_margin += 0.10
+            elif ratio >= 0.6:
+                call_margin += 0.07
+            elif ratio >= 0.35:
+                call_margin += 0.04
+            call_overbet_adj, raise_overbet_adj = core._opponent_overbet_adjustments(
+                player,
+                player.hero.continue_cost,
+                pot_total,
+            )
+            call_margin += call_overbet_adj
+            raise_margin += raise_overbet_adj
+        if core.is_flop(player.street):
+            call_margin += 0.04
         call_margin -= core._fold_bias_by_street(player.street) * 2.0
         raise_call_penalty = core._raise_call_penalty(player, pot_total)
         call_margin -= raise_call_penalty
@@ -150,24 +178,24 @@ class TightPolicy:
         if player.street > 0:
             raise_threshold = pot_odds + raise_margin
             if force_full_equity:
-                equity = stats.estimate_equity(
+                equity = core._range_conditioned_equity(
+                    player,
                     hero_hand,
                     board_cards,
                     samples=samples,
                     max_seconds=max_seconds,
-                    discard_samples=discard_samples,
                 )
             elif quick_equity > raise_threshold + 0.12:
                 equity = quick_equity
             elif quick_equity < pot_odds - call_margin - 0.12:
                 equity = quick_equity
             else:
-                equity = stats.estimate_equity(
+                equity = core._range_conditioned_equity(
+                    player,
                     hero_hand,
                     board_cards,
                     samples=samples,
                     max_seconds=max_seconds,
-                    discard_samples=discard_samples,
                 )
             if equity_bias:
                 equity = max(0.0, min(1.0, equity + equity_bias))
@@ -175,6 +203,19 @@ class TightPolicy:
         if RaiseAction in legal_actions:
             min_raise, max_raise = getattr(player.hero, "raise_bounds", (0, 0))
             raise_threshold = pot_odds + raise_margin
+            if core.is_river(player.street):
+                equity = core._range_conditioned_equity(
+                    player,
+                    hero_hand,
+                    board_cards,
+                    samples=samples,
+                    max_seconds=max_seconds,
+                )
+                raise_threshold += 0.06 + opp_river_raise_adj
+                if player.hero.continue_cost == 0:
+                    strength, confidence = core.opponent_range_hint()
+                    thin_guard = 0.02 + 0.02 * confidence + 0.03 * max(0.0, strength - 0.55)
+                    raise_threshold += thin_guard
             raise_cap = max(4, int(pot_total // 2 * raise_cap_mult))
             fold_rate = core.fold_equity_estimate(None, min_raise, player.street, pot_total)
             if min_raise > raise_cap or min_raise > player.hero.stack // 3:
@@ -184,16 +225,25 @@ class TightPolicy:
                 target = core._cap_raise_for_lock_defense(player, target)
                 if target >= min_raise:
                     return _record(RaiseAction(target), equity, pot_odds)
+            elif core.is_river(player.street) and equity < core._RIVER_VALUE_FLOOR + opp_river_floor_adj:
+                pass
             elif equity < core._AGGRO_EQUITY:
                 pass
             elif equity > raise_threshold and min_raise > 0:
                 value_mult = core._value_extraction_multiplier(player)
                 target = core._raise_size(pot_total, min_raise, max_raise, equity, value_mult=value_mult)
+                if core.is_river(player.street) and equity < core._NUT_RAISE_EQUITY:
+                    river_cap = int(pot_total * core._RIVER_MAX_RAISE_FRAC)
+                    target = min(target, river_cap)
                 target = core._adjust_value_raise(target, min_raise, max_raise, fold_rate, equity)
                 target = core._cap_raise_for_lock_defense(player, target)
                 if target >= min_raise:
                     return _record(RaiseAction(target), equity, pot_odds)
-            if equity < pot_odds - 0.1 and core._should_bluff(player.street, board_cards, player.street == 0):
+            if (
+                not core.is_river(player.street)
+                and equity < pot_odds - 0.1
+                and core._should_bluff(player.street, board_cards, player.street == 0)
+            ):
                 if fold_rate <= 0.3:
                     pass
                 else:

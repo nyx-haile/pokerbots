@@ -5,6 +5,7 @@ from typing import Dict
 
 _POLICY_ACTIONS: Dict[str, Dict[int, Dict[str, int]]] = {}
 _POLICY_EQUITY_ODDS: Dict[str, Dict[int, Dict[str, float]]] = {}
+_DISCARD_EV_STATS: Dict[str, Dict[int, Dict[str, float]]] = {}
 
 
 def policy_summary(stats: Dict[str, Dict]) -> str:
@@ -156,5 +157,109 @@ def equity_vs_pot_odds_summary() -> str:
                 f"  {policy} street={street} count={int(count)} "
                 f"equity={avg_equity:.3f} pot_odds={avg_pot_odds:.3f} "
                 f"diff={avg_diff:.3f} abs_diff={avg_abs_diff:.3f}"
+            )
+    return "\n".join(lines)
+
+
+def record_discard_decision(policy: str, street: int, equities, chosen_idx: int):
+    if equities is None:
+        return None
+    equities = list(equities)
+    if not equities:
+        return None
+    if not policy:
+        policy = "UnknownPolicy"
+    street = int(street)
+    if chosen_idx is None or chosen_idx < 0 or chosen_idx >= len(equities):
+        return None
+    chosen_eq = float(equities[chosen_idx])
+    best_idx = max(range(len(equities)), key=equities.__getitem__)
+    best_eq = float(equities[best_idx])
+    gap = best_eq - chosen_eq
+    bucket = _DISCARD_EV_STATS.setdefault(policy, {}).setdefault(
+        street,
+        {
+            "count": 0.0,
+            "sum_chosen": 0.0,
+            "sum_best": 0.0,
+            "sum_gap": 0.0,
+            "missed_best": 0.0,
+            "wins": 0.0,
+            "losses": 0.0,
+            "ties": 0.0,
+            "loss_gap": 0.0,
+        },
+    )
+    bucket["count"] += 1.0
+    bucket["sum_chosen"] += chosen_eq
+    bucket["sum_best"] += best_eq
+    bucket["sum_gap"] += gap
+    if best_idx != chosen_idx:
+        bucket["missed_best"] += 1.0
+    return {
+        "policy": policy,
+        "street": street,
+        "chosen_idx": chosen_idx,
+        "chosen_eq": chosen_eq,
+        "best_idx": best_idx,
+        "best_eq": best_eq,
+        "gap": gap,
+    }
+
+
+def record_discard_outcome(decision, delta: int) -> None:
+    if not decision:
+        return
+    policy = decision.get("policy", "UnknownPolicy")
+    street = int(decision.get("street", 0))
+    bucket = _DISCARD_EV_STATS.setdefault(policy, {}).setdefault(
+        street,
+        {
+            "count": 0.0,
+            "sum_chosen": 0.0,
+            "sum_best": 0.0,
+            "sum_gap": 0.0,
+            "missed_best": 0.0,
+            "wins": 0.0,
+            "losses": 0.0,
+            "ties": 0.0,
+            "loss_gap": 0.0,
+        },
+    )
+    if delta > 0:
+        bucket["wins"] += 1.0
+    elif delta < 0:
+        bucket["losses"] += 1.0
+        bucket["loss_gap"] += float(decision.get("gap", 0.0))
+    else:
+        bucket["ties"] += 1.0
+
+
+def discard_ev_summary() -> str:
+    if not _DISCARD_EV_STATS:
+        return "discard_ev: none"
+    lines = ["discard_ev:"]
+    for policy in sorted(_DISCARD_EV_STATS):
+        policy_bucket = _DISCARD_EV_STATS[policy]
+        for street in sorted(policy_bucket):
+            bucket = policy_bucket[street]
+            count = bucket.get("count", 0.0)
+            if count <= 0:
+                continue
+            avg_chosen = bucket.get("sum_chosen", 0.0) / count
+            avg_best = bucket.get("sum_best", 0.0) / count
+            avg_gap = bucket.get("sum_gap", 0.0) / count
+            missed = bucket.get("missed_best", 0.0)
+            wins = bucket.get("wins", 0.0)
+            losses = bucket.get("losses", 0.0)
+            ties = bucket.get("ties", 0.0)
+            outcome_total = max(1.0, wins + losses + ties)
+            win_rate = wins / outcome_total
+            loss_gap = bucket.get("loss_gap", 0.0)
+            avg_loss_gap = loss_gap / max(1.0, losses)
+            lines.append(
+                f"  {policy} street={street} count={int(count)} "
+                f"chosen={avg_chosen:.3f} best={avg_best:.3f} gap={avg_gap:.3f} "
+                f"missed={int(missed)} win_rate={win_rate:.3f} loss_gap={avg_loss_gap:.3f}"
             )
     return "\n".join(lines)

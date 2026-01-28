@@ -3,7 +3,7 @@
 import math
 import os
 import random
-from typing import Optional, Sequence, List
+from typing import Optional, Sequence, List, Tuple
 
 import stats
 
@@ -20,6 +20,7 @@ from .math import (
     _board_is_paired,
     _board_texture_adjustments,
     _lead_protection_size_mult,
+    is_river,
 )
 
 _USE_RANDOM_POLICY = os.environ.get("NEUROPOKER_USE_RANDOM_POLICY", "0") == "1"
@@ -40,6 +41,14 @@ _OPPONENT_DISCARD_MODEL = {
 _BET_MODEL_DECAY = 0.99
 _OPPONENT_BET_MODEL = {
     "by_street": {},
+}
+_OPPONENT_BET_SIZE_MODEL = {
+    "by_street": {},
+}
+_OVERBET_ACCURACY = {
+    "count": 0.0,
+    "sum_brier": 0.0,
+    "sum_abs": 0.0,
 }
 _RANGE_MODEL_DECAY = 0.99
 _OPPONENT_RANGE_MODEL = {
@@ -388,12 +397,49 @@ def record_opponent_bet_response(street: int, bet_size: int, pot_total: int, fol
         counts["call"] += 1.0
 
 
+def record_opponent_bet_size(street: int, bet_size: int, pot_total: int) -> None:
+    if bet_size <= 0:
+        return
+    pot = max(1, pot_total)
+    ratio = bet_size / float(pot)
+    street_bucket = _OPPONENT_BET_SIZE_MODEL["by_street"].setdefault(
+        street,
+        {"total": 0.0, "overbet": 0.0, "big": 0.0},
+    )
+    street_bucket["total"] += 1.0
+    if ratio > 1.0:
+        street_bucket["overbet"] += 1.0
+    if ratio > 1.5:
+        street_bucket["big"] += 1.0
+
+
+def record_overbet_observation(street: int, bet_size: int, pot_total: int) -> None:
+    if bet_size <= 0:
+        return
+    pot = max(1, pot_total)
+    ratio = bet_size / float(pot)
+    is_overbet = 1.0 if ratio > 1.0 else 0.0
+    rate, _, confidence = opponent_overbet_rate(street)
+    if confidence <= 0.0:
+        return
+    prob = max(0.0, min(1.0, rate))
+    error = prob - is_overbet
+    _OVERBET_ACCURACY["count"] += 1.0
+    _OVERBET_ACCURACY["sum_brier"] += error * error
+    _OVERBET_ACCURACY["sum_abs"] += abs(error)
+
+
 def decay_bet_model() -> None:
     by_street = _OPPONENT_BET_MODEL["by_street"]
     for street, bucket in by_street.items():
         for counts in bucket.values():
             counts["fold"] *= _BET_MODEL_DECAY
             counts["call"] *= _BET_MODEL_DECAY
+    overbet_by_street = _OPPONENT_BET_SIZE_MODEL["by_street"]
+    for bucket in overbet_by_street.values():
+        bucket["total"] *= _BET_MODEL_DECAY
+        bucket["overbet"] *= _BET_MODEL_DECAY
+        bucket["big"] *= _BET_MODEL_DECAY
 
 
 def _bet_size_bucket(bet_size: int, pot_total: int) -> str:
@@ -412,6 +458,79 @@ def fold_equity_estimate(player_id, bet_size: int, street: int, pot_total: int) 
     if fold_rate > 0.0:
         return fold_rate
     return _opponent_fold_rate(street, None)
+
+
+def opponent_overbet_rate(street: Optional[int]) -> Tuple[float, float, float]:
+    if street is None:
+        total = 0.0
+        overbet = 0.0
+        big = 0.0
+        for bucket in _OPPONENT_BET_SIZE_MODEL["by_street"].values():
+            total += bucket.get("total", 0.0)
+            overbet += bucket.get("overbet", 0.0)
+            big += bucket.get("big", 0.0)
+    else:
+        bucket = _OPPONENT_BET_SIZE_MODEL["by_street"].get(street, {})
+        total = bucket.get("total", 0.0)
+        overbet = bucket.get("overbet", 0.0)
+        big = bucket.get("big", 0.0)
+    if total < 3:
+        return 0.0, 0.0, 0.0
+    confidence = min(1.0, total / 12.0)
+    return overbet / total, big / total, confidence
+
+
+def opponent_overbet_summary() -> str:
+    lines = ["opponent_overbet:"]
+    by_street = _OPPONENT_BET_SIZE_MODEL["by_street"]
+    if not by_street:
+        return "opponent_overbet: none"
+    for street in sorted(by_street):
+        bucket = by_street[street]
+        total = bucket.get("total", 0.0)
+        if total <= 0:
+            continue
+        overbet = bucket.get("overbet", 0.0)
+        big = bucket.get("big", 0.0)
+        lines.append(
+            f"  street={street} total={int(total)} overbet={overbet/total:.3f} big={big/total:.3f}"
+        )
+    if len(lines) == 1:
+        return "opponent_overbet: none"
+    return "\n".join(lines)
+
+
+def overbet_accuracy_summary() -> str:
+    count = _OVERBET_ACCURACY.get("count", 0.0)
+    if count <= 0:
+        return "overbet_accuracy: none"
+    brier = _OVERBET_ACCURACY.get("sum_brier", 0.0) / count
+    abs_err = _OVERBET_ACCURACY.get("sum_abs", 0.0) / count
+    return f"overbet_accuracy: count={int(count)} brier={brier:.4f} abs_err={abs_err:.3f}"
+
+
+def _opponent_overbet_adjustments(player, bet_size: int, pot_total: int) -> Tuple[float, float]:
+    if bet_size <= 0:
+        return 0.0, 0.0
+    pot = max(1, pot_total)
+    ratio = bet_size / float(pot)
+    if ratio <= 1.0:
+        return 0.0, 0.0
+    rate, big_rate, confidence = opponent_overbet_rate(getattr(player, "street", None))
+    if confidence <= 0.0:
+        return 0.0, 0.0
+    call_adj = 0.0
+    raise_adj = 0.0
+    if rate < 0.2:
+        base = min(0.08, 0.04 + 0.04 * (ratio - 1.0))
+        raise_adj += base * confidence
+        call_adj += min(0.06, 0.03 + 0.03 * (ratio - 1.0)) * confidence
+    elif rate > 0.5 and big_rate > 0.25:
+        call_adj -= 0.02 * confidence
+        raise_adj -= 0.02 * confidence
+    call_adj = max(-0.03, min(0.06, call_adj))
+    raise_adj = max(-0.04, min(0.08, raise_adj))
+    return call_adj, raise_adj
 
 
 def record_opponent_raise(street: int) -> None:
@@ -486,6 +605,63 @@ def opponent_range_strength() -> float:
     return (showdowns["wins"] - showdowns["losses"]) / total
 
 
+def opponent_range_hint() -> Tuple[float, float]:
+    inferred = _OPPONENT_RANGE_MODEL["inferred"]
+    inferred_total = inferred["total"]
+    if inferred_total > 0:
+        inferred_avg = inferred["sum"] / inferred_total
+    else:
+        inferred_avg = 0.5
+    showdowns = _OPPONENT_RANGE_MODEL["showdowns"]
+    total_showdowns = showdowns["wins"] + showdowns["losses"]
+    if total_showdowns > 0:
+        showdown_bias = (showdowns["wins"] - showdowns["losses"]) / total_showdowns
+        showdown_avg = 0.5 + 0.25 * showdown_bias
+    else:
+        showdown_avg = 0.5
+    strength = 0.7 * inferred_avg + 0.3 * showdown_avg
+    discard_strength_adj, _, discard_conf = opponent_discard_range_adjustment()
+    strength += discard_strength_adj
+    strength = max(0.25, min(0.92, strength))
+    confidence = min(1.0, (inferred_total + total_showdowns) / 10.0)
+    if discard_conf > 0:
+        confidence = max(confidence, 0.4 * discard_conf)
+    return strength, confidence
+
+
+def opponent_discard_range_adjustment() -> Tuple[float, float, float]:
+    total = _OPPONENT_DISCARD_MODEL["total"]
+    if total < 3:
+        return 0.0, 0.0, 0.0
+    rank_counts = _OPPONENT_DISCARD_MODEL["rank_counts"]
+    avg_rank = sum(idx * count for idx, count in enumerate(rank_counts)) / total
+    discard_strength = max(0.0, min(1.0, avg_rank / 12.0))
+    confidence = min(1.0, total / 20.0)
+    strength_shift = (0.5 - discard_strength) * 0.12 * confidence
+    tightness_shift = strength_shift * 0.5
+    return strength_shift, tightness_shift, confidence
+
+
+def _opponent_threshold_adjustments(player) -> Tuple[float, float, float, float]:
+    strength, confidence = opponent_range_hint()
+    delta = strength - 0.5
+    raise_adj = 0.05 * delta * (0.5 + confidence)
+    call_adj = 0.03 * delta * (0.5 + confidence)
+    discard_strength_adj, _, discard_conf = opponent_discard_range_adjustment()
+    if getattr(player, "street", 0) >= 4 and discard_conf > 0:
+        raise_adj += discard_strength_adj * 0.6
+        call_adj += discard_strength_adj * 0.4
+    raise_adj = max(-0.03, min(0.06, raise_adj))
+    call_adj = max(-0.02, min(0.04, call_adj))
+    river_raise_adj = 0.0
+    river_floor_adj = 0.0
+    if is_river(getattr(player, "street", 0)):
+        strong = max(0.0, strength - 0.55)
+        river_raise_adj = 0.03 + 0.03 * confidence + 0.03 * strong
+        river_floor_adj = 0.02 + 0.03 * confidence + 0.05 * strong
+    return raise_adj, call_adj, river_raise_adj, river_floor_adj
+
+
 def update_range_after_discard(range3, discarded_card):
     record_opponent_discard(discarded_card)
     return range3
@@ -493,6 +669,9 @@ def update_range_after_discard(range3, discarded_card):
 
 def _should_bluff(street: int, board_cards: Sequence[str], allow_bluff: bool = True) -> bool:
     if not allow_bluff:
+        return False
+    suppression = _discard_bluff_suppression(None)
+    if suppression > 0.0 and random.random() < suppression:
         return False
     if street == 0:
         return random.random() < 0.006
@@ -505,6 +684,21 @@ def _should_bluff(street: int, board_cards: Sequence[str], allow_bluff: bool = T
     if _board_is_flushy(board_tuple):
         return False
     return random.random() < 0.006
+
+
+def _discard_bluff_suppression(player) -> float:
+    total = _OPPONENT_DISCARD_MODEL["total"]
+    if total < 6:
+        return 0.0
+    rank_counts = _OPPONENT_DISCARD_MODEL["rank_counts"]
+    avg_rank = sum(idx * count for idx, count in enumerate(rank_counts)) / total
+    discard_strength = max(0.0, min(1.0, avg_rank / 12.0))
+    confidence = min(1.0, total / 20.0)
+    if discard_strength >= 0.5:
+        return 0.0
+    bias = (0.5 - discard_strength) / 0.5
+    suppression = bias * 0.6 * confidence
+    return max(0.0, min(0.6, suppression))
 
 
 def record_opponent_discard(card: str) -> None:

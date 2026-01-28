@@ -415,6 +415,17 @@ _DESPERATE_CALL_PENALTY = _load_float_list(
     param_values=_PARAM_VALUES,
 )[0]
 
+_RIVER_VALUE_FLOOR = _load_float_list(
+    "NEUROPOKER_RIVER_VALUE_FLOOR",
+    1,
+    (0.70,),
+)[0]
+_RIVER_MAX_RAISE_FRAC = _load_float_list(
+    "NEUROPOKER_RIVER_MAX_RAISE_FRAC",
+    1,
+    (0.6,),
+)[0]
+
 
 @dataclass(frozen=True)
 class StrategyConfig:

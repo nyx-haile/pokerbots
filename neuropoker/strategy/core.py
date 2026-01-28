@@ -8,6 +8,7 @@ from skeleton.actions import CallAction, CheckAction, DiscardAction, FoldAction
 from skeleton.states import BIG_BLIND, NUM_ROUNDS, SMALL_BLIND, STARTING_STACK
 
 import stats
+import lumberjack
 from .math import (
     _DESPERATE_CALL_PENALTY,
     _DESPERATE_NUT_THRESHOLD,
@@ -17,16 +18,20 @@ from .math import (
     _max_safe_loss_this_round,
     _remaining_fold_loss,
     pot_odds_to_call,
+    is_river,
 )
 from .models import (
     _policy_classes,
     _select_round_policy,
     _choose_policy_for_round,
     _select_discard_asymmetric,
+    opponent_range_hint,
+    opponent_discard_range_adjustment,
 )
 
 _DISABLE_PREFLOP_MIX = os.environ.get("NEUROPOKER_DISABLE_PREFLOP_MIX", "0") == "1"
-_ENABLE_LOCK_WIN = os.environ.get("NEUROPOKER_ENABLE_LOCK_WIN", "1") == "1"
+_ENABLE_LOCK_WIN = os.environ.get("NEUROPOKER_ENABLE_LOCK_WIN", "1") == "0"
+#temporarily disabled
 
 
 @dataclass
@@ -64,6 +69,14 @@ def _estimate_policy_equity(player: PlayerView) -> float:
     if player.street <= 0:
         return stats.preflop_strength(hero_hand)
     samples, max_seconds, discard_samples = _equity_budget(player)
+    if len(hero_hand) == 2:
+        return _range_conditioned_equity(
+            player,
+            hero_hand,
+            board_cards,
+            samples=max(24, samples // 5),
+            max_seconds=min(0.006, max_seconds * 0.25),
+        )
     return stats.estimate_equity(
         hero_hand,
         board_cards,
@@ -71,6 +84,51 @@ def _estimate_policy_equity(player: PlayerView) -> float:
         max_seconds=min(0.004, max_seconds * 0.2),
         discard_samples=max(4, discard_samples // 2),
     )
+
+
+def _range_conditioned_equity(
+    player: PlayerView,
+    hero_hand,
+    board_cards,
+    samples: int,
+    max_seconds: float,
+) -> float:
+    if len(hero_hand) != 2:
+        return stats.estimate_equity(
+            hero_hand,
+            board_cards,
+            samples=samples,
+            max_seconds=max_seconds,
+        )
+    strength, confidence = opponent_range_hint()
+    discard_strength_adj, discard_tightness_adj, discard_conf = opponent_discard_range_adjustment()
+    strength += discard_strength_adj
+    if discard_conf > 0:
+        confidence = max(confidence, 0.4 * discard_conf)
+    strong = max(0.0, strength - 0.5)
+    river_tighten = 0.0
+    if is_river(getattr(player, "street", 0)):
+        river_tighten = 0.04 + 0.04 * confidence + 0.04 * strong
+    strength = min(0.97, strength + 0.06 * strong + 0.04 * confidence * strong + river_tighten)
+    tightness = 0.35 + 0.5 * confidence + 0.25 * strong + discard_tightness_adj + (0.1 if river_tighten > 0 else 0.0)
+    tightness = min(0.9, max(0.25, tightness))
+    mix_uniform = 0.45 - 0.3 * confidence - 0.15 * strong - (0.08 if river_tighten > 0 else 0.0)
+    mix_uniform = max(0.15, mix_uniform)
+    opponent_range = stats.build_opponent_range(
+        hero_hand + board_cards,
+        target_strength=strength,
+        tightness=tightness,
+        mix_uniform=mix_uniform,
+    )
+    return stats.estimate_showdown_equity(
+        hero_hand,
+        opponent_range,
+        board_cards,
+        samples=samples,
+        max_seconds=max_seconds,
+    )
+
+
 
 
 def _should_lock_win(player: PlayerView) -> bool:
@@ -271,6 +329,12 @@ def _force_discard_if_needed(player: PlayerView, action):
         discard_visible=player.hero.blind,
         opponent_discard=opponent_discard,
         board_cards=board_cards,
+    )
+    player.hero.last_discard_ev = lumberjack.record_discard_decision(
+        getattr(player.hero, "policy_class", None).__name__ if getattr(player.hero, "policy_class", None) else None,
+        player.street,
+        equities,
+        best_i,
     )
     player.hero.last_discard = hero_hand[best_i]
     player.hero.last_discard_visible = player.hero.blind
