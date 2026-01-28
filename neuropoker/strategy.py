@@ -956,21 +956,13 @@ def _remaining_fold_loss(player: PlayerView) -> int:
     round_num = getattr(player, "round_num", 0)
     if round_num <= 0:
         return 0
-    rounds_left = max(0, NUM_ROUNDS - round_num )
-    if rounds_left <= 0:
-        return 0
+    rounds_left = max(0, NUM_ROUNDS - round_num)
     current_loss = int(max(0, getattr(player.hero, "contribution", 0)))
     if current_loss <= 0:
         current_loss = BIG_BLIND if getattr(player.hero, "blind", False) else SMALL_BLIND
-    future_loss = 0
-    big_blind = not getattr(player.hero, "blind", False)
-
-    future_loss =  3*(rounds_left // 2)
-    if big_blind and rounds_left % 2:
-        future_loss += 1
-    elif rounds_left % 2:
-        future_loss += 2
-    return future_loss
+    starts_as_bb = not getattr(player.hero, "blind", False)
+    future_loss = _blind_loss_for_rounds(rounds_left, starts_as_bb)
+    return current_loss + future_loss
 
 def _should_lock_win(player: PlayerView) -> bool:
     if not _ENABLE_LOCK_WIN:
@@ -978,7 +970,7 @@ def _should_lock_win(player: PlayerView) -> bool:
     bankroll = getattr(player.hero, "bankroll", 0)
     if bankroll <= 0:
         return False
-    return bankroll > _remaining_fold_loss(player) + player.hero.pot_total
+    return bankroll > _remaining_fold_loss(player)
 
 
 def _lock_win_action(player: PlayerView):
@@ -1001,12 +993,8 @@ def _lock_win_action(player: PlayerView):
 def _opponent_future_fold_loss(player: PlayerView, rounds_left: int) -> int:
     if rounds_left <= 0:
         return 0
-    opponent_big = bool(getattr(player.hero, "blind", False))
-    total = 0
-    for _ in range(rounds_left):
-        total += BIG_BLIND if opponent_big else SMALL_BLIND
-        opponent_big = not opponent_big
-    return total
+    starts_as_bb = bool(getattr(player.hero, "blind", False))
+    return _blind_loss_for_rounds(rounds_left, starts_as_bb)
 
 
 def _opponent_can_lock_after_fold(player: PlayerView) -> bool:
@@ -1046,13 +1034,13 @@ def _avoid_lock_win_fold(player: PlayerView, action):
 def _blind_loss_for_rounds(rounds_left: int, starts_as_bb: bool) -> int:
     """
     Calculate total blind losses over rounds_left rounds.
-    Closed-form: pairs * 3 + remainder (2 if BB, 1 if SB).
+    Closed-form: pairs * (BB+SB) + remainder (BB if starts_as_bb else SB).
     """
     if rounds_left <= 0:
         return 0
     pairs = rounds_left // 2
     remainder = rounds_left % 2
-    total = pairs * 3  # Each pair: BB(2) + SB(1) = 3
+    total = pairs * (BIG_BLIND + SMALL_BLIND)
     if remainder:
         total += BIG_BLIND if starts_as_bb else SMALL_BLIND
     return total

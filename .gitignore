@@ -5,3 +5,4 @@ tuning/*
 __pycache__/
 *.pyc
 baselines/
+*.prof

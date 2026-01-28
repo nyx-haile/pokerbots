@@ -51,9 +51,6 @@ class Player(Bot):
         self._last_bet_pot = None
         self._last_bet_street = None
         self._last_aggressor = False
-        self._last_villain_pip = 0
-        self._last_street_seen = 0
-        self._last_hero_pip = 0
         self._log(f"init python={sys.version.split()[0]}")
         self._log(f"cwd={os.getcwd()}")
         self._log(f"executable={sys.executable}")
@@ -65,6 +62,49 @@ class Player(Bot):
 
     def _log(self, message: str) -> None:
         print(f"[bot] {message}", flush=True)
+
+    def _record_opponent_action_from_state(self, round_state, hero_index, villain_index) -> None:
+        prev = round_state.previous_state
+        if prev is None:
+            return
+        prev_actor = prev.button % 2
+        if prev_actor != villain_index:
+            return
+        # Ignore discard-only streets and discard actions.
+        if prev.street in (2, 3):
+            return
+        if len(round_state.board) > len(prev.board):
+            return
+
+        prev_continue_cost = prev.pips[1 - prev_actor] - prev.pips[prev_actor]
+
+        # Special-case blind posting (SB CallAction on button 0).
+        if (
+            prev.street == 0
+            and prev.button == 0
+            and prev_continue_cost == 0
+            and round_state.pips == [BIG_BLIND, BIG_BLIND]
+        ):
+            return
+
+        # Street advanced: last action must have been a check or call.
+        if prev.street != round_state.street:
+            if prev_continue_cost > 0:
+                strategy.record_opponent_call(prev.street)
+            else:
+                strategy.record_opponent_action(prev.street)
+            return
+
+        # Same street: infer by pip delta.
+        delta = round_state.pips[prev_actor] - prev.pips[prev_actor]
+        if delta <= 0:
+            if prev_continue_cost == 0:
+                strategy.record_opponent_action(prev.street)
+            return
+        if prev_continue_cost > 0 and delta == prev_continue_cost:
+            strategy.record_opponent_call(prev.street)
+        else:
+            strategy.record_opponent_raise(prev.street)
 
     def handle_new_round(self, game_state, round_state, active):
         '''
@@ -99,9 +139,6 @@ class Player(Bot):
         self._last_bet_pot = None
         self._last_bet_street = None
         self._last_aggressor = False
-        self._last_villain_pip = round_state.pips[1 - active]
-        self._last_street_seen = round_state.street
-        self._last_hero_pip = round_state.pips[active]
         strategy.begin_round(self)
         if self.round_num % 100 == 1:
             self._log(f"round={self.round_num} bankroll={self.hero.bankroll} clock={self.game_clock:.2f}")
@@ -133,8 +170,6 @@ class Player(Bot):
         strategy.decay_discard_model()
         strategy.decay_bet_model()
         strategy.decay_range_model()
-        self.hero.policy_class = None
-        self.hero.policy_round = None
         self.hero.discard_bluff = False
         if self._last_aggressor and self._last_bet_size is not None:
             villain_revealed = bool(self.villain.hand)
@@ -167,6 +202,8 @@ class Player(Bot):
         if self.hero.policy_class == DesperatePolicy and self.hero.delta < 0:
             self.hero.enable_desperate = False
 
+        self.hero.policy_class = None
+        self.hero.policy_round = None
 
     def get_action(self, game_state, round_state, active):
         '''
@@ -236,16 +273,7 @@ class Player(Bot):
         if self.hero.continue_cost > 0:
             self._last_aggressor = False
 
-        if self._last_street_seen == self.street:
-            if self.villain.pip > self._last_villain_pip:
-                strategy.record_opponent_raise(self.street)
-            elif self.hero.continue_cost > 0 and self.villain.pip == self._last_villain_pip and self.hero.pip > self._last_hero_pip:
-                strategy.record_opponent_call(self.street)
-            elif self.villain.pip == self._last_villain_pip and self.hero.continue_cost == 0:
-                strategy.record_opponent_action(self.street)
-        self._last_villain_pip = self.villain.pip
-        self._last_hero_pip = self.hero.pip
-        self._last_street_seen = self.street
+        self._record_opponent_action_from_state(round_state, hero_index, villain_index)
 
         # Only use DiscardAction if it's in legal_actions (which already checks street)
         # legal_actions() returns DiscardAction only when street is 2 or 3

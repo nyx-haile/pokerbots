@@ -9,11 +9,6 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
 _BACKEND = os.environ.get("NEUROPOKER_EVAL_BACKEND", "pkrbot").lower()
 _USE_PKRBOT = _BACKEND in ("auto", "pkrbot") and pkrbot is not None
-_USE_POKERSTOVE = (
-    _BACKEND in ("auto", "pokerstove")
-    and cs is not None
-    and not _USE_PKRBOT
-)
 
 _RANKS = "23456789TJQKA"
 _SUITS = "cdhs"
@@ -230,9 +225,7 @@ def _evaluate_best_cached(cards_tuple: Tuple[int, ...]) -> int:
     cards = list(cards_tuple)
     if _USE_PKRBOT:
         return _pkrbot_best_eval(cards)
-    if _USE_POKERSTOVE:
-        return _pokerstove_best_eval(_ensure_str_cards(cards))
-    raise RuntimeError("No supported evaluator available (pkrbot or pokerstove).")
+    raise RuntimeError("No supported evaluator available pkrbot")
 
 
 def evaluate_best(board, hand):
@@ -244,7 +237,7 @@ def evaluate_best(board, hand):
     return _evaluate_best_cached(tuple(cards))
 
 def compare_evals(hero_rank, villain_rank):
-    if _USE_PKRBOT or _USE_POKERSTOVE:
+    if _USE_PKRBOT:
         if hero_rank > villain_rank:
             return 1
         if hero_rank < villain_rank:
