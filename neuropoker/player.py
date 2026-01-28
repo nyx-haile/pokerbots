@@ -6,7 +6,7 @@ from skeleton.states import GameState, TerminalState, RoundState
 from skeleton.states import NUM_ROUNDS, STARTING_STACK, BIG_BLIND, SMALL_BLIND
 from skeleton.bot import Bot
 from skeleton.runner import parse_args, run_bot
-from strategies.lockwin import DesperatePolicy
+from strategies.desperate import DesperatePolicy
 
 import os
 import random
@@ -24,6 +24,7 @@ for key, value in _SINGLE_CORE_ENV.items():
 
 import strategy
 import stats
+import lumberjack
 from strategy import ActorView
 
 class Player(Bot):
@@ -62,17 +63,14 @@ class Player(Bot):
             "hero_fold_to_raise": {},
             "river_loss_after_bet": {"count": 0, "delta": 0},
         }
-        self._log(f"init python={sys.version.split()[0]}")
-        self._log(f"cwd={os.getcwd()}")
-        self._log(f"executable={sys.executable}")
-        self._log(f"sys.path[0:3]={sys.path[:3]}")
-        self._log(f"env.PYTHONPATH={os.environ.get('PYTHONPATH')}")
-        self._log(f"env.NEUROPOKER_EVAL_BACKEND={os.environ.get('NEUROPOKER_EVAL_BACKEND')}")
+        lumberjack.log(f"init python={sys.version.split()[0]}")
+        lumberjack.log(f"cwd={os.getcwd()}")
+        lumberjack.log(f"executable={sys.executable}")
+        lumberjack.log(f"sys.path[0:3]={sys.path[:3]}")
+        lumberjack.log(f"env.PYTHONPATH={os.environ.get('PYTHONPATH')}")
+        lumberjack.log(f"env.NEUROPOKER_EVAL_BACKEND={os.environ.get('NEUROPOKER_EVAL_BACKEND')}")
         import stats  # noqa: F401
-        self._log("stats=ok")
-
-    def _log(self, message: str) -> None:
-        print(f"[bot] {message}", flush=True)
+        lumberjack.log("stats=ok")
 
     def _pot_total_from_state(self, state: RoundState) -> int:
         return (STARTING_STACK - state.stacks[0]) + (STARTING_STACK - state.stacks[1])
@@ -87,54 +85,6 @@ class Player(Bot):
             self._bump_bucket(self._leak_stats["villain_bets"], street, bucket)
         elif action == "check":
             self._bump_bucket(self._leak_stats["villain_checks"], street, "check")
-
-    def _leak_summary(self) -> str:
-        lines = ["leak_stats:"]
-        end = self._leak_stats["end_by_street"]
-        for street in sorted(end.keys()):
-            entry = end[street]
-            lines.append(
-                f"  end_street={street} hands={entry.get('hands', 0)} "
-                f"delta={entry.get('delta', 0)} losses={entry.get('loss', 0)}"
-            )
-        calls = self._leak_stats["hero_calls"]
-        for street in sorted(calls.keys()):
-            entry = calls[street]
-            lines.append(
-                f"  hero_calls street={street} calls={entry.get('calls', 0)} "
-                f"wins={entry.get('wins', 0)} losses={entry.get('losses', 0)}"
-            )
-        folds = self._leak_stats["hero_fold_vs_bet"]
-        for street in sorted(folds.keys()):
-            entry = folds[street]
-            lines.append(
-                f"  hero_folds_vs_bet street={street} "
-                f"small={entry.get('small', 0)} medium={entry.get('medium', 0)} large={entry.get('large', 0)}"
-            )
-        bets = self._leak_stats["villain_bets"]
-        for street in sorted(bets.keys()):
-            entry = bets[street]
-            lines.append(
-                f"  villain_bets street={street} "
-                f"small={entry.get('small', 0)} medium={entry.get('medium', 0)} large={entry.get('large', 0)}"
-            )
-        checks = self._leak_stats["villain_checks"]
-        for street in sorted(checks.keys()):
-            entry = checks[street]
-            lines.append(
-                f"  villain_checks street={street} checks={entry.get('check', 0)}"
-            )
-        folds_to_raise = self._leak_stats["hero_fold_to_raise"]
-        for street in sorted(folds_to_raise.keys()):
-            entry = folds_to_raise[street]
-            lines.append(
-                f"  hero_fold_to_raise street={street} count={entry.get('fold_to_raise', 0)}"
-            )
-        river_loss = self._leak_stats["river_loss_after_bet"]
-        lines.append(
-            f"  river_loss_after_bet count={river_loss.get('count', 0)} delta={river_loss.get('delta', 0)}"
-        )
-        return "\n".join(lines)
 
     def _record_opponent_action_from_state(self, round_state, hero_index, villain_index) -> None:
         prev = round_state.previous_state
@@ -219,7 +169,7 @@ class Player(Bot):
         self._last_aggressor = False
         strategy.begin_round(self)
         if self.round_num % 100 == 1:
-            self._log(f"round={self.round_num} bankroll={self.hero.bankroll} clock={self.game_clock:.2f}")
+            lumberjack.log(f"round={self.round_num} bankroll={self.hero.bankroll} clock={self.game_clock:.2f}")
 
     def handle_round_over(self, game_state, terminal_state, active):
         '''
@@ -310,11 +260,13 @@ class Player(Bot):
             self._leak_stats["river_loss_after_bet"]["count"] += 1
             self._leak_stats["river_loss_after_bet"]["delta"] += int(self.hero.delta)
         if self.round_num % 100 == 1:
-            self._log(f"round_over={self.round_num} delta={self.hero.delta}")
+            lumberjack.log(f"round_over={self.round_num} delta={self.hero.delta}")
 
         if game_state.round_num >= NUM_ROUNDS:
-            self._log(strategy.policy_summary())
-            self._log(self._leak_summary())
+            lumberjack.log(lumberjack.policy_summary(strategy._POLICY_STATS))
+            lumberjack.log(lumberjack.leak_summary(self._leak_stats))
+            lumberjack.log(lumberjack.policy_action_summary())
+            lumberjack.log(lumberjack.equity_vs_pot_odds_summary())
 
         if self.hero.policy_class == DesperatePolicy and self.hero.delta < 0:
             self.hero.enable_desperate = False
@@ -396,7 +348,7 @@ class Player(Bot):
         # legal_actions() returns DiscardAction only when street is 2 or 3
 
         if not self._logged_start:
-            self._log(f"first_action street={self.street} legal={self.hero.legal_actions}")
+            lumberjack.log(f"first_action street={self.street} legal={self.hero.legal_actions}")
             self._logged_start = True
         action = strategy.play(self)
 
@@ -407,7 +359,7 @@ class Player(Bot):
         if self.street <= 0:
             bucket = getattr(self.hero, "preflop_bucket", "n/a")
             roll = getattr(self.hero, "preflop_roll", None)
-            self._log(
+            lumberjack.log(
                 "preflop decision action={0} equity={1:.3f} pot_odds={2:.3f} "
                 "continue_cost={3} pot_total={4} legal={5} bucket={6} roll={7}".format(
                     getattr(action, "__class__", type(action)).__name__,

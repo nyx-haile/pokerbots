@@ -1,5 +1,6 @@
 from skeleton.actions import CallAction, CheckAction, DiscardAction, FoldAction, RaiseAction
 
+import lumberjack
 import stats
 import strategy as core
 
@@ -15,12 +16,16 @@ class BluffPolicy:
         pot_total = max(1, player.hero.pot_total)
         continue_cost = player.hero.continue_cost
 
+        def _record(action):
+            lumberjack.record_policy_action("BluffPolicy", player.street, action.__class__.__name__)
+            return action
+
         if DiscardAction in legal_actions:
             best_i = _bluff_signal_discard_index(hero_hand, board_cards)
             player.hero.last_discard = hero_hand[best_i]
             player.hero.last_discard_visible = player.hero.blind
             player.hero.discard_bluff = True
-            return DiscardAction(best_i)
+            return _record(DiscardAction(best_i))
 
         if RaiseAction in legal_actions:
             min_raise, max_raise = getattr(player.hero, "raise_bounds", (0, 0))
@@ -36,15 +41,15 @@ class BluffPolicy:
                         fold_rate = core.fold_equity_estimate(None, target, player.street, pot_total)
                         if target >= min_raise and fold_rate >= 0.35:
                             core._consume_discard_bluff(player)
-                            return RaiseAction(target)
+                            return _record(RaiseAction(target))
 
         if CheckAction in legal_actions and player.hero.continue_cost == 0:
-            return CheckAction()
+            return _record(CheckAction())
         if CallAction in legal_actions:
-            return CallAction()
+            return _record(CallAction())
         if CheckAction in legal_actions:
-            return CheckAction()
-        return FoldAction()
+            return _record(CheckAction())
+        return _record(FoldAction())
 
 
 def _bluff_signal_discard_index(hero_hand, board_cards):

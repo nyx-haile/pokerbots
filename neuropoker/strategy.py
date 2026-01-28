@@ -8,6 +8,7 @@ import time
 from typing import Any, Iterable, Mapping, Optional, Sequence, Tuple, Dict, List
 from skeleton.actions import CallAction, CheckAction, DiscardAction, FoldAction, RaiseAction
 
+import lumberjack
 import stats
 from skeleton.states import BIG_BLIND, NUM_ROUNDS, SMALL_BLIND, STARTING_STACK
 
@@ -885,41 +886,6 @@ def _ensure_policy_stats(policy_class=None) -> None:
         )
 
 
-def policy_summary() -> str:
-    if not _POLICY_STATS:
-        return "policy_stats: none"
-    entries = []
-    for key, stats_bucket in _POLICY_STATS.items():
-        count = stats_bucket.get("count", 0.0)
-        if count <= 0:
-            continue
-        avg_delta = stats_bucket.get("total_delta", 0.0) / count
-        avg_reward = stats_bucket.get("total_reward", 0.0) / count
-        avg = stats_bucket.get("avg", 0.0)
-        header = (
-            f"{key}: hands={int(count)} avg_delta={avg_delta:.2f} "
-            f"avg_reward={avg_reward:.3f} ema_reward={avg:.3f}"
-        )
-        per_street = stats_bucket.get("per_street", {})
-        street_lines = []
-        for street, street_bucket in per_street.items():
-            street_count = street_bucket.get("count", 0.0)
-            if street_count <= 0:
-                continue
-            street_avg_delta = street_bucket.get("total_delta", 0.0) / street_count
-            street_avg_reward = street_bucket.get("total_reward", 0.0) / street_count
-            street_lines.append(
-                f"  street={street} hands={int(street_count)} "
-                f"avg_delta={street_avg_delta:.2f} avg_reward={street_avg_reward:.3f}"
-            )
-        street_lines.sort()
-        entries.append("\n".join([header] + street_lines))
-    if not entries:
-        return "policy_stats: none"
-    entries.sort()
-    return "policy_stats:\n" + "\n".join(entries)
-
-
 def _select_round_policy(player: PlayerView):
     policy_class = getattr(player.hero, "policy_class", None)
     policy_round = getattr(player.hero, "policy_round", None)
@@ -1244,7 +1210,8 @@ def play(bot):
     instance from skeleton.actions.
     """
 
-    from strategies.lockwin import LockWinPolicy, DesperatePolicy
+    from strategies.lockwin import LockWinPolicy
+    from strategies.desperate import DesperatePolicy
     # Reset the action timer for hard 9-second cap in stats.py
     stats._reset_action_timer()
 

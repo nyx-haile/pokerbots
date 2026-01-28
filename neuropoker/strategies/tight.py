@@ -1,5 +1,6 @@
 from skeleton.actions import CallAction, CheckAction, DiscardAction, FoldAction, RaiseAction
 
+import lumberjack
 import stats
 import strategy as core
 
@@ -12,6 +13,17 @@ class TightPolicy:
         legal_actions = set(player.hero.legal_actions)
         hero_hand = list(player.hero.hand)
         board_cards = list(player.community)
+
+        def _record(action, equity_value=None, pot_odds_value=None):
+            lumberjack.record_policy_action("TightPolicy", player.street, action.__class__.__name__)
+            if equity_value is not None and pot_odds_value is not None:
+                lumberjack.record_equity_vs_pot_odds(
+                    "TightPolicy",
+                    player.street,
+                    equity_value,
+                    pot_odds_value,
+                )
+            return action
 
         if DiscardAction in legal_actions:
             opponent_discard = None
@@ -34,7 +46,7 @@ class TightPolicy:
             player.hero.last_discard = hero_hand[best_i]
             player.hero.last_discard_visible = player.hero.blind
             player.hero.discard_bluff = False
-            return DiscardAction(best_i)
+            return _record(DiscardAction(best_i))
 
         pot_total = max(1, player.hero.pot_total)
         player.hero.discard_bluff = False
@@ -129,7 +141,7 @@ class TightPolicy:
                 pot_total,
             )
             if action is not None:
-                return action
+                return _record(action, equity, pot_odds)
 
         if player.street > 0:
             raise_threshold = pot_odds + raise_margin
@@ -159,7 +171,7 @@ class TightPolicy:
                 target = core._nut_raise_target(min_raise, max_raise)
                 target = core._cap_raise_for_lock_defense(player, target)
                 if target >= min_raise:
-                    return RaiseAction(target)
+                    return _record(RaiseAction(target), equity, pot_odds)
             elif equity < core._AGGRO_EQUITY:
                 pass
             elif equity > raise_threshold and min_raise > 0:
@@ -168,7 +180,7 @@ class TightPolicy:
                 target = core._adjust_value_raise(target, min_raise, max_raise, fold_rate, equity)
                 target = core._cap_raise_for_lock_defense(player, target)
                 if target >= min_raise:
-                    return RaiseAction(target)
+                    return _record(RaiseAction(target), equity, pot_odds)
             if equity < pot_odds - 0.1 and core._should_bluff(player.street, board_cards, player.street == 0):
                 if fold_rate <= 0.3:
                     pass
@@ -177,7 +189,7 @@ class TightPolicy:
                     if target > 0:
                         target = core._cap_raise_for_lock_defense(player, target)
                         if target >= min_raise:
-                            return RaiseAction(target)
+                            return _record(RaiseAction(target), equity, pot_odds)
 
         hard_fold_equity = core._hard_fold_equity(player.street)
         if (
@@ -187,15 +199,15 @@ class TightPolicy:
             and equity < hard_fold_equity
             and FoldAction in legal_actions
         ):
-            return FoldAction()
+            return _record(FoldAction(), equity, pot_odds)
 
         if equity < pot_odds - call_margin and FoldAction in legal_actions:
-            return FoldAction()
+            return _record(FoldAction(), equity, pot_odds)
 
         if CheckAction in legal_actions and player.hero.continue_cost == 0:
-            return CheckAction()
+            return _record(CheckAction(), equity, pot_odds)
         if CallAction in legal_actions:
-            return CallAction()
+            return _record(CallAction(), equity, pot_odds)
         if CheckAction in legal_actions:
-            return CheckAction()
-        return FoldAction()
+            return _record(CheckAction(), equity, pot_odds)
+        return _record(FoldAction(), equity, pot_odds)
