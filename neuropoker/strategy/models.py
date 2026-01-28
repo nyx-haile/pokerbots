@@ -701,6 +701,76 @@ def _discard_bluff_suppression(player) -> float:
     return max(0.0, min(0.6, suppression))
 
 
+def _adaptive_raise_size(
+    player,
+    pot_total: int,
+    min_raise: int,
+    max_raise: int,
+    equity: float,
+    bluff: bool = False,
+    value_mult: float = 1.0,
+) -> int:
+    if max_raise <= 0:
+        return 0
+    pot = max(1, pot_total)
+    street = getattr(player, "street", 0)
+    fold_rate = fold_equity_estimate(None, min_raise, street, pot_total)
+    if fold_rate <= 0.0:
+        fold_rate = _opponent_fold_rate(street, None)
+    base_ratio = 0.28
+    if bluff:
+        base_ratio += 0.15 * max(0.0, fold_rate - 0.25)
+        base_ratio -= 0.08 * max(0.0, 0.25 - fold_rate)
+    else:
+        base_ratio += 0.55 * max(0.0, min(1.0, equity))
+        base_ratio *= max(0.7, min(1.4, value_mult))
+    overbet_rate, big_rate, conf = opponent_overbet_rate(street)
+    if conf > 0.0:
+        if overbet_rate < 0.2:
+            base_ratio *= 1.05 + 0.05 * conf
+        elif overbet_rate > 0.5 and big_rate > 0.2:
+            base_ratio *= 0.92 - 0.05 * conf
+    base_ratio = max(0.18, min(1.25, base_ratio))
+
+    seed = hash(
+        (
+            getattr(player, "round_num", 0),
+            street,
+            tuple(getattr(getattr(player, "hero", None), "hand", ())),
+            tuple(getattr(player, "community", ())),
+            int(equity * 100),
+        )
+    ) & 0xFFFFFFFF
+    rng = random.Random(seed)
+    jitter = rng.uniform(0.88, 1.12)
+    target = int(pot * base_ratio * jitter)
+    target = max(min_raise, min(max_raise, target))
+    target = _ladder_raise_target(player, target, min_raise, max_raise)
+    return max(min_raise, min(max_raise, target))
+
+
+def _ladder_raise_target(player, ideal_target: int, min_raise: int, max_raise: int) -> int:
+    # NOTE: Laddering only triggers on re-raises; if calls end the street, this won't realize the plan.
+    if player is None or not hasattr(player, "hero"):
+        return ideal_target
+    street = getattr(player, "street", None)
+    continue_cost = getattr(player.hero, "continue_cost", 0)
+    plan_target = getattr(player.hero, "raise_plan_target", None)
+    plan_street = getattr(player.hero, "raise_plan_street", None)
+    if plan_target is not None and plan_street == street and continue_cost > 0:
+        player.hero.raise_plan_target = None
+        player.hero.raise_plan_street = None
+        return max(min_raise, min(max_raise, int(plan_target)))
+    if continue_cost == 0:
+        player.hero.raise_plan_target = ideal_target
+        player.hero.raise_plan_street = street
+        if ideal_target <= int(min_raise * 1.2):
+            return ideal_target
+        step = min_raise + int((ideal_target - min_raise) * 0.55)
+        return max(min_raise, min(max_raise, step))
+    return ideal_target
+
+
 def record_opponent_discard(card: str) -> None:
     card_int = stats._ensure_int_cards([card])[0]
     rank = stats.Card.get_rank_int(card_int)

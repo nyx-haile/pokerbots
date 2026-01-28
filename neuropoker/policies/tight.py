@@ -231,7 +231,14 @@ class TightPolicy:
                 pass
             elif equity > raise_threshold and min_raise > 0:
                 value_mult = core._value_extraction_multiplier(player)
-                target = core._raise_size(pot_total, min_raise, max_raise, equity, value_mult=value_mult)
+                target = core._adaptive_raise_size(
+                    player,
+                    pot_total,
+                    min_raise,
+                    max_raise,
+                    equity,
+                    value_mult=value_mult,
+                )
                 if core.is_river(player.street) and equity < core._NUT_RAISE_EQUITY:
                     river_cap = int(pot_total * core._RIVER_MAX_RAISE_FRAC)
                     target = min(target, river_cap)
@@ -247,7 +254,14 @@ class TightPolicy:
                 if fold_rate <= 0.3:
                     pass
                 else:
-                    target = core._raise_size(pot_total, min_raise, max_raise, equity, bluff=True)
+                    target = core._adaptive_raise_size(
+                        player,
+                        pot_total,
+                        min_raise,
+                        max_raise,
+                        equity,
+                        bluff=True,
+                    )
                     if target > 0:
                         target = core._cap_raise_for_lock_defense(player, target)
                         if target >= min_raise:

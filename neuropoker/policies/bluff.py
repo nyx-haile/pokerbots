@@ -37,7 +37,14 @@ class BluffPolicy:
                 if texture_raise <= 0.0:
                     raise_cap = max(4, int(pot_total * 0.5 * raise_cap_mult))
                     if min_raise <= raise_cap:
-                        target = core._raise_size(pot_total, min_raise, max_raise, equity=0.0, bluff=True)
+                        target = core._adaptive_raise_size(
+                            player,
+                            pot_total,
+                            min_raise,
+                            max_raise,
+                            equity=0.0,
+                            bluff=True,
+                        )
                         target = min(target, int(pot_total * 0.4))
                         target = min(target, raise_cap)
                         target = core._cap_raise_for_lock_defense(player, target)

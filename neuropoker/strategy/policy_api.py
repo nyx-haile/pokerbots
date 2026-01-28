@@ -56,6 +56,7 @@ from .models import (  # noqa: F401
     _select_discard_asymmetric,
     _should_bluff,
     _discard_bluff_suppression,
+    _adaptive_raise_size,
     _opponent_overbet_adjustments,
     _should_pressure,
     _tight_equity_threshold,

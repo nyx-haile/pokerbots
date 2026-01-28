@@ -95,9 +95,6 @@ class Player(Bot):
         # Ignore discard-only streets and discard actions.
         if prev.street in (2, 3):
             return
-        if len(round_state.board) > len(prev.board):
-            return
-
         prev_continue_cost = prev.pips[1 - prev_actor] - prev.pips[prev_actor]
 
         # Special-case blind posting (SB CallAction on button 0).
@@ -117,6 +114,8 @@ class Player(Bot):
             else:
                 strategy.record_opponent_check(prev.street)
                 self._record_villain_action(prev.street, "check", 0, self._pot_total_from_state(prev))
+            return
+        if len(round_state.board) > len(prev.board):
             return
 
         # Same street: infer by pip delta.
@@ -170,6 +169,8 @@ class Player(Bot):
         self._last_aggressor = False
         strategy.begin_round(self)
         self.hero.last_discard_ev = None
+        self.hero.raise_plan_target = None
+        self.hero.raise_plan_street = None
         if self.round_num % 100 == 1:
             lumberjack.log(f"round={self.round_num} bankroll={self.hero.bankroll} clock={self.game_clock:.2f}")
 
@@ -303,6 +304,9 @@ class Player(Bot):
         self.street = round_state.street
         # 0, 3, 4, or 5 representing pre-flop,
         # flop, turn, or river respectively
+        if getattr(self.hero, "raise_plan_street", None) not in (None, self.street):
+            self.hero.raise_plan_target = None
+            self.hero.raise_plan_street = None
 
 
         hero_index = active

@@ -6,8 +6,8 @@ from typing import Sequence
 from skeleton.actions import CallAction, CheckAction, FoldAction, RaiseAction
 
 from .core import PlayerView
-from .math import _PREFLOP_CALL_THRESHOLDS, _PREFLOP_RAISE_THRESHOLDS, _raise_size
-from .models import _value_extraction_multiplier, opponent_range_hint, _opponent_fold_rate
+from .math import _PREFLOP_CALL_THRESHOLDS, _PREFLOP_RAISE_THRESHOLDS
+from .models import _value_extraction_multiplier, opponent_range_hint, _opponent_fold_rate, _adaptive_raise_size
 
 
 def _preflop_open_decision(
@@ -53,7 +53,14 @@ def _preflop_open_decision(
         if raise_prob > 0 and roll < raise_prob:
             _set_preflop_debug(player, bucket, roll)
             value_mult = _value_extraction_multiplier(player)
-            target = _raise_size(pot_total, min_raise, max_raise, equity, value_mult=value_mult)
+            target = _adaptive_raise_size(
+                player,
+                pot_total,
+                min_raise,
+                max_raise,
+                equity,
+                value_mult=value_mult,
+            )
             if target > 0:
                 return RaiseAction(target)
 
