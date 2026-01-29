@@ -162,7 +162,7 @@ _PREFLOP_RAISE_THRESHOLDS = _load_thresholds(
 )
 _PREFLOP_CALL_THRESHOLDS = _load_thresholds(
     "NEUROPOKER_PREFLOP_CALL_THRESHOLDS",
-    (0.6275, 0.5389, 0.3478),
+    (0.6100, 0.5200, 0.3300),
     param_key="preflop_call_thresholds",
     param_values=_PARAM_VALUES,
 )
@@ -352,28 +352,28 @@ _PRESSURE_FOLDRATE_MIN = _load_float_list(
 _LEAD_PROT_THRESHOLDS = _load_float_list(
     "NEUROPOKER_LEAD_PROT_THRESHOLDS",
     4,
-    (0.2, 0.4, 0.6, 0.8),
+    (0.25, 0.45, 0.65, 0.85),
     param_key="lead_prot_thresholds",
     param_values=_PARAM_VALUES,
 )
 _LEAD_PROT_ADJUSTMENTS = _load_float_list(
     "NEUROPOKER_LEAD_PROT_ADJUSTMENTS",
     4,
-    (0.02, 0.04, 0.06, 0.10),
+    (0.015, 0.03, 0.05, 0.08),
     param_key="lead_prot_adjustments",
     param_values=_PARAM_VALUES,
 )
 _LEAD_PROT_SIZE_MULTS = _load_float_list(
     "NEUROPOKER_LEAD_PROT_SIZE_MULTS",
     4,
-    (0.5, 0.7, 0.8, 0.9),
+    (0.6, 0.75, 0.85, 0.95),
     param_key="lead_prot_size_mults",
     param_values=_PARAM_VALUES,
 )
 _LEAD_PROT_POT_FACTOR = _load_float_list(
     "NEUROPOKER_LEAD_PROT_POT_FACTOR",
     1,
-    (0.4,),
+    (0.3,),
     param_key="lead_prot_pot_factor",
     param_values=_PARAM_VALUES,
 )[0]
