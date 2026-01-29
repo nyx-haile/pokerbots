@@ -273,14 +273,14 @@ def main():
             )
 
         if batch in ("all", "margins"):
-            raise_margin_pre = trial.suggest_float("raise_margin_pre", 0.08, 0.20, step=0.04)
-            raise_margin_post = trial.suggest_float("raise_margin_post", 0.06, 0.16, step=0.04)
-            raise_margin_turn = trial.suggest_float("raise_margin_turn", 0.08, 0.18, step=0.04)
-            raise_margin_river = trial.suggest_float("raise_margin_river", 0.08, 0.20, step=0.04)
-            call_margin_pre = trial.suggest_float("call_margin_pre", 0.02, 0.08, step=0.02)
-            call_margin_post = trial.suggest_float("call_margin_post", 0.02, 0.06, step=0.02)
-            call_margin_turn = trial.suggest_float("call_margin_turn", 0.02, 0.08, step=0.02)
-            call_margin_river = trial.suggest_float("call_margin_river", 0.03, 0.09, step=0.02)
+            raise_margin_pre = trial.suggest_float("raise_margin_pre", 0.12, 0.32, step=0.04)
+            raise_margin_post = trial.suggest_float("raise_margin_post", 0.12, 0.32, step=0.04)
+            raise_margin_turn = trial.suggest_float("raise_margin_turn", 0.12, 0.32, step=0.04)
+            raise_margin_river = trial.suggest_float("raise_margin_river", 0.16, 0.36, step=0.04)
+            call_margin_pre = trial.suggest_float("call_margin_pre", 0.06, 0.16, step=0.02)
+            call_margin_post = trial.suggest_float("call_margin_post", 0.06, 0.16, step=0.02)
+            call_margin_turn = trial.suggest_float("call_margin_turn", 0.08, 0.18, step=0.02)
+            call_margin_river = trial.suggest_float("call_margin_river", 0.10, 0.22, step=0.02)
             env_vars.append(
                 "NEUROPOKER_RAISE_MARGIN_BY_STREET=%.4f,%.4f,%.4f,%.4f"
                 % (raise_margin_pre, raise_margin_post, raise_margin_turn, raise_margin_river)
@@ -292,7 +292,7 @@ def main():
 
         if batch in ("all", "turn_defense"):
             raise_call_ratio = trial.suggest_float("raise_call_ratio", 0.50, 0.85, step=0.05)
-            raise_call_penalty = trial.suggest_float("raise_call_penalty", 0.04, 0.16, step=0.04)
+            raise_call_penalty = trial.suggest_float("raise_call_penalty", 0.0, 0.12, step=0.04)
             turn_raise_ratio = trial.suggest_float("turn_raise_ratio", 0.40, 0.75, step=0.05)
             turn_raise_extra = trial.suggest_float("turn_raise_extra", 0.04, 0.14, step=0.04)
             turn_raise_sample_mult = trial.suggest_float("turn_raise_sample_mult", 1.2, 2.4, step=0.2)

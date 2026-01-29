@@ -40,6 +40,7 @@ from .math import (  # noqa: F401
     _RIVER_MAX_RAISE_FRAC,
     _RIVER_VALUE_FLOOR,
     _line_call_penalty,
+    _is_passive_line,
     _confidence_call_penalty,
     _suppress_medium_raise_target,
     is_flop,

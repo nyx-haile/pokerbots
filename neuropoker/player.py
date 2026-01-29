@@ -58,6 +58,8 @@ class Player(Bot):
         self._last_bet_street = None
         self._last_aggressor = False
         self._last_hero_call_street = None
+        self._last_hero_bet_street = None
+        self._last_hero_bet_action = None
         self._hero_bet_buckets = []
         self._hero_line_actions = {}
         self._river_value_bet = False
@@ -184,6 +186,8 @@ class Player(Bot):
         self._hero_bet_buckets = []
         self._hero_line_actions = {}
         self._river_value_bet = False
+        self._last_hero_bet_street = None
+        self._last_hero_bet_action = None
         strategy.begin_round(self)
         self.hero.last_discard_ev = None
         self.hero.raise_plan_target = None
@@ -252,6 +256,7 @@ class Player(Bot):
         if self.hero.delta > 0 and not self.villain.hand and self._last_bet_street is not None:
             strategy.record_opponent_fold(self._last_bet_street)
         end_street = int(self.previous_state.street)
+        log_street = self._last_hero_bet_street if self._last_hero_bet_street is not None else end_street
         if self.villain.hand:
             if self.hero.delta > 0:
                 strategy.record_opponent_showdown(False)
@@ -266,23 +271,23 @@ class Player(Bot):
                 strength,
                 confidence,
                 int(self.hero.delta),
-                int(end_street),
+                int(log_street),
                 line_key,
             )
         if getattr(self.hero, "last_discard_ev", None):
             lumberjack.record_discard_outcome(self.hero.last_discard_ev, int(self.hero.delta))
             self.hero.last_discard_ev = None
         end_bucket = self._leak_stats["end_by_street"].setdefault(
-            end_street, {"hands": 0, "delta": 0, "loss": 0}
+            log_street, {"hands": 0, "delta": 0, "loss": 0}
         )
         end_bucket["hands"] += 1
         end_bucket["delta"] += int(self.hero.delta)
         if self.hero.delta < 0:
             end_bucket["loss"] += 1
 
-        if self._last_hero_call_street in (4, 5):
+        if self._last_hero_bet_action == "call" and self._last_hero_bet_street in (4, 5):
             call_bucket = self._leak_stats["hero_calls"].setdefault(
-                int(self._last_hero_call_street),
+                int(self._last_hero_bet_street),
                 {"calls": 0, "wins": 0, "losses": 0},
             )
             call_bucket["calls"] += 1
@@ -303,7 +308,7 @@ class Player(Bot):
             if self._last_bet_street == street and self._last_bet_size is not None:
                 self._bump_bucket(self._leak_stats["hero_fold_to_raise"], street, "fold_to_raise")
 
-        if end_street == 6 and self.hero.delta < 0 and self._last_bet_street in (4, 5):
+        if end_street == 6 and self.hero.delta < 0 and self._last_hero_bet_street in (4, 5):
             self._leak_stats["river_loss_after_bet"]["count"] += 1
             self._leak_stats["river_loss_after_bet"]["delta"] += int(self.hero.delta)
         for street, bucket in self._hero_bet_buckets:
@@ -322,6 +327,7 @@ class Player(Bot):
             lumberjack.log(lumberjack.policy_action_summary())
             lumberjack.log(lumberjack.aggression_ratio_summary())
             lumberjack.log(lumberjack.equity_vs_pot_odds_summary())
+            lumberjack.log(lumberjack.equity_error_summary())
             lumberjack.log(lumberjack.threshold_summary())
             lumberjack.log(lumberjack.discard_ev_summary())
             lumberjack.log(lumberjack.showdown_line_summary())
@@ -338,6 +344,8 @@ class Player(Bot):
         self.hero.policy_class = None
         self.hero.policy_round = None
         self._last_hero_call_street = None
+        self._last_hero_bet_street = None
+        self._last_hero_bet_action = None
 
     def get_action(self, game_state, round_state, active):
         '''
@@ -425,6 +433,8 @@ class Player(Bot):
             self._pending_hero_discard = self.hero.hand[action.card]
         if isinstance(action, CallAction):
             self._last_hero_call_street = self.street
+            self._last_hero_bet_street = self.street
+            self._last_hero_bet_action = "call"
         lumberjack.record_hero_action(self.street, action.__class__.__name__)
         if self.street in (0, 4, 5, 6) and not isinstance(action, DiscardAction):
             if self.street not in self._hero_line_actions:
@@ -466,6 +476,8 @@ class Player(Bot):
             self._last_bet_pot = self.hero.pot_total
             self._last_bet_street = self.street
             self._last_aggressor = True
+            self._last_hero_bet_street = self.street
+            self._last_hero_bet_action = "raise"
         return action
         #export computation to strategy engine
 

@@ -102,6 +102,7 @@ def _range_conditioned_equity(
             samples=samples,
             max_seconds=max_seconds,
         )
+    street = getattr(player, "street", 0)
     line_key = getattr(getattr(player, "hero", None), "line_prefix", None)
     strength, confidence = opponent_range_hint(line_key)
     discard_strength_adj, discard_tightness_adj, discard_conf = opponent_discard_range_adjustment()
@@ -115,6 +116,9 @@ def _range_conditioned_equity(
     strength = min(0.97, strength + 0.06 * strong + 0.04 * confidence * strong + river_tighten)
     tightness = 0.35 + 0.5 * confidence + 0.25 * strong + discard_tightness_adj + (0.1 if river_tighten > 0 else 0.0)
     tightness = min(0.9, max(0.25, tightness))
+    if confidence < 0.25:
+        strength = min(0.98, strength + 0.02)
+        tightness = min(0.95, tightness + 0.04)
     mix_uniform = 0.45 - 0.3 * confidence - 0.15 * strong - (0.08 if river_tighten > 0 else 0.0)
     mix_uniform = max(0.15, mix_uniform)
     opponent_range = stats.build_opponent_range(
@@ -123,13 +127,42 @@ def _range_conditioned_equity(
         tightness=tightness,
         mix_uniform=mix_uniform,
     )
-    return stats.estimate_showdown_equity(
+    quick_samples = max(12, samples // 3)
+    quick_seconds = max(0.004, max_seconds * 0.4)
+    quick_equity = stats.estimate_showdown_equity(
+        hero_hand,
+        opponent_range,
+        board_cards,
+        samples=quick_samples,
+        max_seconds=quick_seconds,
+    )
+    equity = stats.estimate_showdown_equity(
         hero_hand,
         opponent_range,
         board_cards,
         samples=samples,
         max_seconds=max_seconds,
     )
+    abs_error = abs(equity - quick_equity)
+    extended = False
+    game_clock = getattr(player, "game_clock", None)
+    if abs_error > 0.05 and (game_clock is None or game_clock > 18):
+        boosted_samples = int(samples * 1.6)
+        boosted_seconds = max_seconds * 1.6
+        equity = stats.estimate_showdown_equity(
+            hero_hand,
+            opponent_range,
+            board_cards,
+            samples=boosted_samples,
+            max_seconds=boosted_seconds,
+        )
+        abs_error = abs(equity - quick_equity)
+        extended = True
+        samples_used = boosted_samples
+    else:
+        samples_used = samples
+    lumberjack.record_equity_error(street, abs_error, samples_used, extended)
+    return equity
 
 
 

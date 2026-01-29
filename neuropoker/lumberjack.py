@@ -11,6 +11,7 @@ _SHOWDOWN_LINES: Dict[str, Dict[str, float]] = {}
 _BET_SIZE_EV: Dict[int, Dict[str, Dict[str, float]]] = {}
 _RIVER_VALUE_BET: Dict[str, float] = {"count": 0.0, "wins": 0.0, "sum_delta": 0.0}
 _THRESHOLD_STATS: Dict[str, Dict[int, Dict[str, float]]] = {}
+_EQUITY_ERROR_STATS: Dict[int, Dict[str, float]] = {}
 
 
 def policy_summary(stats: Dict[str, Dict]) -> str:
@@ -156,6 +157,18 @@ def record_thresholds(
     street_bucket["sum_raise_drift"] += float(raise_threshold - pot_odds)
 
 
+def record_equity_error(street: int, abs_error: float, samples: int, extended: bool = False) -> None:
+    bucket = _EQUITY_ERROR_STATS.setdefault(
+        int(street),
+        {"count": 0.0, "sum_abs": 0.0, "sum_samples": 0.0, "extended": 0.0},
+    )
+    bucket["count"] += 1.0
+    bucket["sum_abs"] += float(abs_error)
+    bucket["sum_samples"] += float(samples)
+    if extended:
+        bucket["extended"] += 1.0
+
+
 def record_hero_action(street: int, action: str) -> None:
     street_bucket = _HERO_ACTIONS.setdefault(int(street), {})
     street_bucket[action] = street_bucket.get(action, 0) + 1
@@ -211,6 +224,25 @@ def equity_vs_pot_odds_summary() -> str:
                 f"equity={avg_equity:.3f} pot_odds={avg_pot_odds:.3f} "
                 f"diff={avg_diff:.3f} abs_diff={avg_abs_diff:.3f}"
             )
+    return "\n".join(lines)
+
+
+def equity_error_summary() -> str:
+    if not _EQUITY_ERROR_STATS:
+        return "equity_error: none"
+    lines = ["equity_error:"]
+    for street in sorted(_EQUITY_ERROR_STATS):
+        bucket = _EQUITY_ERROR_STATS[street]
+        count = bucket.get("count", 0.0)
+        if count <= 0:
+            continue
+        avg_error = bucket.get("sum_abs", 0.0) / count
+        avg_samples = bucket.get("sum_samples", 0.0) / count
+        extended = int(bucket.get("extended", 0.0))
+        lines.append(
+            f"  street={street} count={int(count)} avg_abs_err={avg_error:.3f} "
+            f"avg_samples={avg_samples:.1f} extended={extended}"
+        )
     return "\n".join(lines)
 
 

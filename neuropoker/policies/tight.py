@@ -141,15 +141,23 @@ class TightPolicy:
             raise_mult += raise_overbet_adj
         if core.is_flop(player.street):
             call_mult += 0.04
-        call_mult -= core._fold_bias_by_street(player.street) * 2.0
+        fold_bias = core._fold_bias_by_street(player.street)
+        fold_bias_mult = 2.0
+        if core.is_river(player.street) and player.hero.continue_cost > 0:
+            fold_bias_mult = 3.0
+        call_mult -= fold_bias * fold_bias_mult
         raise_call_penalty = core._raise_call_penalty(player, pot_total)
         turn_raise_extra = core._turn_raise_extra(player, pot_total)
         river_raise_call_penalty = core._river_raise_call_penalty(player, pot_total)
         river_raise_extra = core._river_raise_extra(player, pot_total)
         line_key = getattr(player.hero, "line_prefix", None)
-        call_mult += core._line_call_penalty(line_key, player.street)
+        if player.hero.continue_cost > 0:
+            call_mult -= core._line_call_penalty(line_key, player.street)
         strength, confidence = core.opponent_range_hint(line_key)
-        call_mult += core._confidence_call_penalty(confidence, player.street)
+        if player.hero.continue_cost > 0:
+            call_mult -= core._confidence_call_penalty(confidence, player.street)
+            if core.is_river(player.street):
+                call_mult -= 0.06
         if equity >= core._AGGRO_EQUITY:
             raise_mult -= core._AGGRO_RAISE_BONUS
         if core._should_pressure(player, equity):
@@ -244,6 +252,9 @@ class TightPolicy:
                 pass
             elif equity > raise_threshold and min_raise > 0:
                 value_mult = core._value_extraction_multiplier(player)
+                if core.is_river(player.street) and player.hero.continue_cost == 0:
+                    if core._is_passive_line(line_key):
+                        value_mult *= 1.12
                 target = core._adaptive_raise_size(
                     player,
                     pot_total,
@@ -280,6 +291,18 @@ class TightPolicy:
                         target = core._cap_raise_for_lock_defense(player, target)
                         if target >= min_raise:
                             return _record(RaiseAction(target), equity, pot_odds)
+
+        if core.is_river(player.street) and player.hero.continue_cost > 0 and FoldAction in legal_actions:
+            passive_line = core._is_passive_line(line_key)
+            river_call_gate = 0.03 + 0.04 * max(0.0, 0.35 - confidence) / 0.35
+            river_call_gate += 0.02 * max(0.0, strength - 0.55)
+            if passive_line:
+                river_call_gate += 0.02
+            if equity < pot_odds + river_call_gate:
+                anti_rate = core._anti_exploit_rate(player)
+                if anti_rate > 0 and CallAction in legal_actions and random.random() < anti_rate:
+                    return _record(CallAction(), equity, pot_odds)
+                return _record(FoldAction(), equity, pot_odds)
 
         hard_fold_equity = core._hard_fold_equity(player.street)
         if (

@@ -169,7 +169,7 @@ _PREFLOP_CALL_THRESHOLDS = _load_thresholds(
 _RAISE_SIZE_FRACTIONS = _load_float_list(
     "NEUROPOKER_RAISE_SIZE_FRACTIONS",
     3,
-    (0.65, 0.42, 0.28),
+    (0.70, 0.36, 0.24),
     param_key="raise_size_fractions",
     param_values=_PARAM_VALUES,
 )
@@ -183,14 +183,14 @@ _BLUFF_RAISE_FRACTION = _load_float_list(
 _RAISE_MARGIN_BY_STREET = _load_float_list(
     "NEUROPOKER_RAISE_MARGIN_BY_STREET",
     4,
-    (0.14, 0.11, 0.13, 0.13),
+    (0.14, 0.12, 0.14, 0.15),
     param_key="raise_margin_by_street",
     param_values=_PARAM_VALUES,
 )
 _CALL_MARGIN_BY_STREET = _load_float_list(
     "NEUROPOKER_CALL_MARGIN_BY_STREET",
     4,
-    (0.04, 0.03, 0.04, 0.05),
+    (0.04, 0.04, 0.05, 0.07),
     param_key="call_margin_by_street",
     param_values=_PARAM_VALUES,
 )
@@ -204,7 +204,7 @@ _RAISE_CALL_RATIO = _load_float_list(
 _RAISE_CALL_PENALTY = _load_float_list(
     "NEUROPOKER_RAISE_CALL_PENALTY",
     1,
-    (0.10,),
+    (0.06,),
     param_key="raise_call_penalty",
     param_values=_PARAM_VALUES,
 )[0]
@@ -337,7 +337,7 @@ _PRESSURE_EQUITY_THRESHOLD = _load_float_list(
 _PRESSURE_RAISE_BONUS = _load_float_list(
     "NEUROPOKER_PRESSURE_RAISE_BONUS",
     1,
-    (0.04,),
+    (0.03,),
     param_key="pressure_raise_bonus",
     param_values=_PARAM_VALUES,
 )[0]
@@ -418,12 +418,12 @@ _DESPERATE_CALL_PENALTY = _load_float_list(
 _RIVER_VALUE_FLOOR = _load_float_list(
     "NEUROPOKER_RIVER_VALUE_FLOOR",
     1,
-    (0.72,),
+    (0.74,),
 )[0]
 _RIVER_MAX_RAISE_FRAC = _load_float_list(
     "NEUROPOKER_RIVER_MAX_RAISE_FRAC",
     1,
-    (0.45,),
+    (0.40,),
 )[0]
 
 
@@ -819,10 +819,30 @@ def _adjust_value_raise(
     return min(target, max_raise)
 
 
+_PASSIVE_LINES = {
+    "C-C-C-C",
+    "C-C-C-K",
+    "C-K-C-C",
+    "C-K-K-C",
+    "K-K-K-K",
+    "C-C-K-K",
+    "C-K-C-K",
+    "C-K-K-K",
+}
+
+
+def _is_passive_line(line_key: Optional[str]) -> bool:
+    if not line_key:
+        return False
+    return line_key in _PASSIVE_LINES
+
+
 def _line_call_penalty(line_key: Optional[str], street: int) -> float:
     if street < 5 or not line_key:
         return 0.0
-    if line_key in ("C-C-K-K", "C-K-C-K", "K-K-K-K"):
+    if line_key in ("C-C-C-C", "C-C-C-K", "C-K-C-C", "C-K-K-C", "K-K-K-K"):
+        return 0.08 if street >= 6 else 0.05
+    if line_key in ("C-C-K-K", "C-K-C-K", "C-K-K-K"):
         return 0.06 if street >= 6 else 0.04
     return 0.0
 
@@ -851,8 +871,8 @@ def _suppress_medium_raise_target(
     if equity >= 0.74:
         return target
     if equity >= 0.62:
-        return max(min_raise, int(pot_total * 0.45))
-    return max(min_raise, int(pot_total * 0.32))
+        return max(min_raise, int(pot_total * 0.6))
+    return max(min_raise, int(pot_total * 0.52))
 
 
 @lru_cache(maxsize=10_000)
@@ -1006,6 +1026,9 @@ def _equity_budget(player) -> Tuple[int, float, int]:
         samples = 120
         max_seconds = 0.020
         discard_samples = 12
+    samples = int(samples * 1.5)
+    max_seconds *= 1.5
+    discard_samples = int(discard_samples * 1.5)
     early_r1, early_r2 = _EARLY_BOOST_ROUNDS
     early_m1, early_m2 = _EARLY_BOOST_MULTS
     if round_num <= early_r1 and (game_clock is None or game_clock > 40):

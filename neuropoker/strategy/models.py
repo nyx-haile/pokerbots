@@ -185,7 +185,9 @@ def update_policy_from_round(player) -> None:
     stats_bucket["count"] += 1.0
     stats_bucket["total_delta"] += float(delta)
     stats_bucket["total_reward"] += float(reward)
-    street = getattr(player, "street", None)
+    street = getattr(player, "_last_hero_bet_street", None)
+    if street is None:
+        street = getattr(player, "street", None)
     if street is not None:
         street_bucket = stats_bucket["per_street"].setdefault(
             int(street),
@@ -1027,6 +1029,12 @@ def _adaptive_raise_size(
             base_ratio *= 1.05 + 0.05 * conf
         elif overbet_rate > 0.5 and big_rate > 0.2:
             base_ratio *= 0.92 - 0.05 * conf
+    continue_cost = getattr(getattr(player, "hero", None), "continue_cost", 0)
+    if not bluff and continue_cost == 0:
+        if street >= 5:
+            base_ratio = max(base_ratio, 0.6)
+        elif street >= 4:
+            base_ratio = max(base_ratio, 0.55)
     base_ratio = max(0.18, min(1.25, base_ratio))
 
     seed = hash(
