@@ -15,6 +15,9 @@ OUTPUT_DIR="${OUTPUT_DIR:-tuning}"
 POOL_MODE="${POOL_MODE:-random}"
 BATCHES="${BATCHES:-preflop,margins,turn_defense,bluff,aggression,fold_posture,policy}"
 APPLY_BEST="${APPLY_BEST:-1}"
+JOBS="${JOBS:-0}"
+MATCH_SUBSAMPLE="${MATCH_SUBSAMPLE:-1.0}"
+MATCH_SAMPLE_MIN="${MATCH_SAMPLE_MIN:-1}"
 
 if [[ -z "${BOT_B_POOL}" ]]; then
   _default_pool=()
@@ -112,6 +115,9 @@ for _batch in "${_batches[@]}"; do
     --storage "${STORAGE}" \
     --study-name "${STUDY_NAME}" \
     --output-dir "${OUTPUT_DIR}" \
+    --jobs "${JOBS}" \
+    --match-subsample "${MATCH_SUBSAMPLE}" \
+    --match-sample-min "${MATCH_SAMPLE_MIN}" \
     --batch "${_batch}" \
     $(if [[ "${APPLY_BEST}" == "1" ]]; then echo "--apply-best"; fi)
 done

@@ -93,6 +93,12 @@ def run() -> int:
     parser.add_argument("--seed", type=int, default=None, help="Deterministic seed for the engine RNG")
     parser.add_argument("--engine-python", default=None, help="Python executable for the engine")
     parser.add_argument("--bot-python", default=None, help="Python executable for bot commands")
+    parser.add_argument(
+        "--engine-env",
+        action="append",
+        default=[],
+        help="Environment variables for the engine/bots, e.g. KEY=VALUE (can repeat)",
+    )
     parser.add_argument("--enforce-clock", action="store_true", help="Enable game clock")
     parser.add_argument("--no-enforce-clock", dest="enforce_clock", action="store_false")
     parser.set_defaults(enforce_clock=True)
@@ -121,6 +127,11 @@ def run() -> int:
 
     stdout_path = os.path.join(run_dir, "engine_stdout.txt")
     env = os.environ.copy()
+    for entry in args.engine_env:
+        if "=" not in entry:
+            raise SystemExit("--engine-env must be in KEY=VALUE form: %s" % entry)
+        key, value = entry.split("=", 1)
+        env[key] = value
     engine_python = args.engine_python or env.get("POKERBOTS_ENGINE_PYTHON") or sys.executable
     bot_python = args.bot_python or env.get("POKERBOTS_BOT_PYTHON")
     if bot_python:

@@ -156,7 +156,7 @@ _VARIANT_THRESHOLDS = os.environ.get("NEUROPOKER_VARIANT_THRESHOLDS", "0") == "1
 
 _PREFLOP_RAISE_THRESHOLDS = _load_thresholds(
     "NEUROPOKER_PREFLOP_RAISE_THRESHOLDS",
-    (0.7050, 0.6400, 0.4800),
+    (0.6850, 0.6200, 0.4600),
     param_key="preflop_raise_thresholds",
     param_values=_PARAM_VALUES,
 )
@@ -169,7 +169,7 @@ _PREFLOP_CALL_THRESHOLDS = _load_thresholds(
 _RAISE_SIZE_FRACTIONS = _load_float_list(
     "NEUROPOKER_RAISE_SIZE_FRACTIONS",
     3,
-    (0.75, 0.5, 0.33),
+    (0.65, 0.42, 0.28),
     param_key="raise_size_fractions",
     param_values=_PARAM_VALUES,
 )
@@ -190,21 +190,21 @@ _RAISE_MARGIN_BY_STREET = _load_float_list(
 _CALL_MARGIN_BY_STREET = _load_float_list(
     "NEUROPOKER_CALL_MARGIN_BY_STREET",
     4,
-    (0.05, 0.03, 0.05, 0.06),
+    (0.03, 0.02, 0.03, 0.04),
     param_key="call_margin_by_street",
     param_values=_PARAM_VALUES,
 )
 _RAISE_CALL_RATIO = _load_float_list(
     "NEUROPOKER_RAISE_CALL_RATIO",
     1,
-    (0.6,),
+    (0.7,),
     param_key="raise_call_ratio",
     param_values=_PARAM_VALUES,
 )[0]
 _RAISE_CALL_PENALTY = _load_float_list(
     "NEUROPOKER_RAISE_CALL_PENALTY",
     1,
-    (0.08,),
+    (0.12,),
     param_key="raise_call_penalty",
     param_values=_PARAM_VALUES,
 )[0]
@@ -218,7 +218,7 @@ _TURN_RAISE_RATIO = _load_float_list(
 _TURN_RAISE_EXTRA = _load_float_list(
     "NEUROPOKER_TURN_RAISE_EXTRA",
     1,
-    (0.06,),
+    (0.10,),
     param_key="turn_raise_extra",
     param_values=_PARAM_VALUES,
 )[0]
@@ -418,12 +418,12 @@ _DESPERATE_CALL_PENALTY = _load_float_list(
 _RIVER_VALUE_FLOOR = _load_float_list(
     "NEUROPOKER_RIVER_VALUE_FLOOR",
     1,
-    (0.70,),
+    (0.74,),
 )[0]
 _RIVER_MAX_RAISE_FRAC = _load_float_list(
     "NEUROPOKER_RIVER_MAX_RAISE_FRAC",
     1,
-    (0.6,),
+    (0.45,),
 )[0]
 
 

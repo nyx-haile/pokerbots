@@ -9,6 +9,7 @@ import os
 import random
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 def _timestamp() -> str:
@@ -60,6 +61,83 @@ def _aggregate(all_summaries, failures):
     return aggregate
 
 
+def _run_match_bundle(
+    args,
+    suite_dir: str,
+    match_index: int,
+    bot_b_path: str,
+    run_match_script: str,
+    parse_script: str,
+):
+    match_dir = os.path.join(suite_dir, "match_%03d" % (match_index + 1))
+    os.makedirs(match_dir)
+    with open(os.path.join(match_dir, "bot_b.txt"), "w") as handle:
+        handle.write(bot_b_path + "\n")
+
+    summaries = []
+    failures = []
+
+    def _run_and_parse(label: str, bot_a: str, bot_b: str, target_dir: str, swap: bool):
+        cmd = [
+            sys.executable,
+            run_match_script,
+            "--engine-dir", args.engine_dir,
+            "--engine-python", args.engine_python or "",
+            "--bot-python", args.bot_python or "",
+            "--bot-a", bot_a,
+            "--bot-b", bot_b,
+            "--rounds", str(args.rounds),
+            "--output-dir", target_dir,
+        ]
+        for entry in args.engine_env:
+            cmd.extend(["--engine-env", entry])
+        if not args.engine_python:
+            cmd.remove("--engine-python")
+            cmd.remove("")
+        if not args.bot_python:
+            cmd.remove("--bot-python")
+            cmd.remove("")
+        code, output, timed_out = _run_match(cmd, cwd=suite_dir, timeout=args.match_timeout)
+        with open(os.path.join(target_dir, "run_match_stdout.txt"), "w") as handle:
+            handle.write(output)
+        if code != 0:
+            failures.append({
+                "swap": swap,
+                "return_code": code,
+                "timed_out": timed_out,
+                "match_dir": os.path.abspath(target_dir),
+            })
+            return
+
+        match_runs = [d for d in os.listdir(target_dir) if os.path.isdir(os.path.join(target_dir, d))]
+        if not match_runs:
+            return
+        match_runs.sort()
+        run_path = os.path.join(target_dir, match_runs[-1])
+        gamelog = os.path.join(run_path, "gamelog.txt")
+        summary_path = os.path.join(run_path, "summary.json")
+        parse_cmd = [sys.executable, parse_script, gamelog, "--json-out", summary_path]
+        parse_code, parse_out, parse_timed_out = _run_match(parse_cmd, cwd=suite_dir, timeout=60)
+        with open(os.path.join(run_path, "parse_stdout.txt"), "w") as handle:
+            handle.write(parse_out)
+        if parse_code == 0:
+            summaries.append(_parse_summary(summary_path))
+        else:
+            failures.append({
+                "swap": swap,
+                "return_code": parse_code,
+                "timed_out": parse_timed_out,
+                "match_dir": os.path.abspath(run_path),
+            })
+
+    _run_and_parse("main", args.bot_a, bot_b_path, match_dir, swap=False)
+    if args.seat_swaps:
+        swap_dir = os.path.join(match_dir, "swap")
+        os.makedirs(swap_dir)
+        _run_and_parse("swap", bot_b_path, args.bot_a, swap_dir, swap=True)
+    return summaries, failures
+
+
 def main():
     parser = argparse.ArgumentParser(description="Run a suite of matches and aggregate results.")
     parser.add_argument("--bot-a", required=True, help="Path to bot A")
@@ -78,11 +156,30 @@ def main():
     parser.add_argument("--engine-dir", default="engine-2026", help="Engine directory")
     parser.add_argument("--rounds", type=int, default=1000, help="Rounds per match")
     parser.add_argument("--matches", type=int, default=2, help="Number of seeds to run")
+    parser.add_argument(
+        "--match-subsample",
+        type=float,
+        default=1.0,
+        help="Fraction of matches to run (0 < x <= 1.0)",
+    )
+    parser.add_argument(
+        "--match-sample-min",
+        type=int,
+        default=1,
+        help="Minimum number of matches to run when subsampling",
+    )
     parser.add_argument("--seat-swaps", action="store_true", help="Run a second match swapping seats")
     parser.add_argument("--output-dir", default="runs", help="Output directory")
     parser.add_argument("--match-timeout", type=int, default=900, help="Timeout per match in seconds")
     parser.add_argument("--engine-python", default=None, help="Python executable for the engine")
     parser.add_argument("--bot-python", default=None, help="Python executable for bot commands")
+    parser.add_argument(
+        "--engine-env",
+        action="append",
+        default=[],
+        help="Environment variables for the engine/bots, e.g. KEY=VALUE (can repeat)",
+    )
+    parser.add_argument("--jobs", type=int, default=1, help="Parallel matches to run")
     args = parser.parse_args()
 
     args.engine_dir = os.path.abspath(args.engine_dir)
@@ -108,14 +205,20 @@ def main():
     suite_dir = os.path.join(base_dir, "suite_%s" % _timestamp())
     os.makedirs(suite_dir)
 
-    summaries = []
-    failures = []
     run_match_script = os.path.abspath(os.path.join(os.path.dirname(__file__), "run_match.py"))
     parse_script = os.path.abspath(os.path.join(os.path.dirname(__file__), "parse_gamelog.py"))
-
-    for i in range(args.matches):
-        match_dir = os.path.join(suite_dir, "match_%03d" % (i + 1))
-        os.makedirs(match_dir)
+    total_matches = int(args.matches)
+    if args.match_subsample <= 0 or args.match_subsample > 1.0:
+        raise SystemExit("--match-subsample must be within (0, 1.0].")
+    if args.match_subsample < 1.0:
+        target = max(int(round(total_matches * args.match_subsample)), args.match_sample_min, 1)
+        target = min(target, total_matches)
+        rng = random.Random(os.environ.get("POKERBOTS_MATCH_SAMPLE_SEED"))
+        selected = sorted(rng.sample(range(total_matches), target))
+    else:
+        selected = list(range(total_matches))
+    bot_b_paths = []
+    for i in selected:
         bot_b_path = args.bot_b
         if args.bot_b_pool:
             if args.bot_b_pool_mode == "random":
@@ -123,112 +226,42 @@ def main():
                 bot_b_path = rng.choice(args.bot_b_pool)
             else:
                 bot_b_path = args.bot_b_pool[i % len(args.bot_b_pool)]
-        with open(os.path.join(match_dir, "bot_b.txt"), "w") as handle:
-            handle.write(bot_b_path + "\n")
+        bot_b_paths.append(bot_b_path)
 
-        cmd = [
-            sys.executable,
-            run_match_script,
-            "--engine-dir", args.engine_dir,
-            "--engine-python", args.engine_python or "",
-            "--bot-python", args.bot_python or "",
-            "--bot-a", args.bot_a,
-            "--bot-b", bot_b_path,
-            "--rounds", str(args.rounds),
-            "--output-dir", match_dir,
-        ]
-        if not args.engine_python:
-            cmd.remove("--engine-python")
-            cmd.remove("")
-        if not args.bot_python:
-            cmd.remove("--bot-python")
-            cmd.remove("")
-        code, output, timed_out = _run_match(cmd, cwd=suite_dir, timeout=args.match_timeout)
-        with open(os.path.join(match_dir, "run_match_stdout.txt"), "w") as handle:
-            handle.write(output)
-        if code != 0:
-            failures.append({
-                "swap": False,
-                "return_code": code,
-                "timed_out": timed_out,
-                "match_dir": os.path.abspath(match_dir),
-            })
-            continue
-
-        match_runs = [d for d in os.listdir(match_dir) if os.path.isdir(os.path.join(match_dir, d))]
-        if not match_runs:
-            continue
-        match_runs.sort()
-        run_path = os.path.join(match_dir, match_runs[-1])
-        gamelog = os.path.join(run_path, "gamelog.txt")
-        summary_path = os.path.join(run_path, "summary.json")
-        parse_cmd = [sys.executable, parse_script, gamelog, "--json-out", summary_path]
-        parse_code, parse_out, parse_timed_out = _run_match(parse_cmd, cwd=suite_dir, timeout=60)
-        with open(os.path.join(run_path, "parse_stdout.txt"), "w") as handle:
-            handle.write(parse_out)
-        if parse_code == 0:
-            summaries.append(_parse_summary(summary_path))
-        else:
-            failures.append({
-                "swap": False,
-                "return_code": parse_code,
-                "timed_out": parse_timed_out,
-                "match_dir": os.path.abspath(run_path),
-            })
-
-        if args.seat_swaps:
-            swap_dir = os.path.join(match_dir, "swap")
-            os.makedirs(swap_dir)
-            swap_cmd = [
-                sys.executable,
+    summaries = []
+    failures = []
+    jobs = max(1, int(args.jobs))
+    if jobs == 1:
+        for i, bot_b_path in enumerate(bot_b_paths):
+            match_summaries, match_failures = _run_match_bundle(
+                args,
+                suite_dir,
+                i,
+                bot_b_path,
                 run_match_script,
-                "--engine-dir", args.engine_dir,
-                "--engine-python", args.engine_python or "",
-                "--bot-python", args.bot_python or "",
-                "--bot-a", bot_b_path,
-                "--bot-b", args.bot_a,
-                "--rounds", str(args.rounds),
-                "--output-dir", swap_dir,
-            ]
-            if not args.engine_python:
-                swap_cmd.remove("--engine-python")
-                swap_cmd.remove("")
-            if not args.bot_python:
-                swap_cmd.remove("--bot-python")
-                swap_cmd.remove("")
-            swap_code, swap_out, swap_timed_out = _run_match(swap_cmd, cwd=suite_dir, timeout=args.match_timeout)
-            with open(os.path.join(swap_dir, "run_match_stdout.txt"), "w") as handle:
-                handle.write(swap_out)
-            if swap_code != 0:
-                failures.append({
-                    "swap": True,
-                    "return_code": swap_code,
-                    "timed_out": swap_timed_out,
-                    "match_dir": os.path.abspath(swap_dir),
-                })
-                continue
-            swap_runs = [d for d in os.listdir(swap_dir) if os.path.isdir(os.path.join(swap_dir, d))]
-            if not swap_runs:
-                continue
-            swap_runs.sort()
-            swap_run_path = os.path.join(swap_dir, swap_runs[-1])
-            swap_gamelog = os.path.join(swap_run_path, "gamelog.txt")
-            swap_summary_path = os.path.join(swap_run_path, "summary.json")
-            swap_parse_cmd = [sys.executable, parse_script, swap_gamelog, "--json-out", swap_summary_path]
-            swap_parse_code, swap_parse_out, swap_parse_timed_out = _run_match(
-                swap_parse_cmd, cwd=suite_dir, timeout=60
+                parse_script,
             )
-            with open(os.path.join(swap_run_path, "parse_stdout.txt"), "w") as handle:
-                handle.write(swap_parse_out)
-            if swap_parse_code == 0:
-                summaries.append(_parse_summary(swap_summary_path))
-            else:
-                failures.append({
-                    "swap": True,
-                    "return_code": swap_parse_code,
-                    "timed_out": swap_parse_timed_out,
-                    "match_dir": os.path.abspath(swap_run_path),
-                })
+            summaries.extend(match_summaries)
+            failures.extend(match_failures)
+    else:
+        with ThreadPoolExecutor(max_workers=jobs) as executor:
+            futures = []
+            for i, bot_b_path in enumerate(bot_b_paths):
+                futures.append(
+                    executor.submit(
+                        _run_match_bundle,
+                        args,
+                        suite_dir,
+                        i,
+                        bot_b_path,
+                        run_match_script,
+                        parse_script,
+                    )
+                )
+            for future in as_completed(futures):
+                match_summaries, match_failures = future.result()
+                summaries.extend(match_summaries)
+                failures.extend(match_failures)
 
     aggregate = _aggregate(summaries, failures)
     summary_path = os.path.join(suite_dir, "suite_summary.json")
