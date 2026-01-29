@@ -132,6 +132,7 @@ _OPP_STATION_VALUE_MULT = _load_float_list(
 _POLICY_LR = float(os.environ.get("NEUROPOKER_POLICY_LR", "0.15") or "0.15")
 _POLICY_EPSILON = float(os.environ.get("NEUROPOKER_POLICY_EPSILON", "0.15") or "0.15")
 _POLICY_STATS = {}
+_DRY_POLICY_STATS = {}
 
 
 class RandomFeaturePolicy:
@@ -237,6 +238,49 @@ def _ensure_policy_stats(policy_class=None) -> None:
                 "per_street": {},
             },
         )
+
+
+def _ensure_dry_policy_stats(policy_name: str) -> None:
+    if not policy_name:
+        return
+    _DRY_POLICY_STATS.setdefault(
+        policy_name,
+        {
+            "avg": 0.0,
+            "count": 0.0,
+            "total_delta": 0.0,
+            "total_reward": 0.0,
+            "per_street": {},
+        },
+    )
+
+
+def update_dry_policy_from_round(player, policy_name: str, weight: float = 1.0) -> None:
+    if not policy_name:
+        return
+    _ensure_dry_policy_stats(policy_name)
+    if policy_name not in _DRY_POLICY_STATS:
+        return
+    delta = getattr(player.hero, "delta", 0)
+    reward = max(-1.0, min(1.0, delta / 100.0))
+    weight = max(0.0, float(weight))
+    lr = _POLICY_LR * max(0.25, min(1.0, weight))
+    stats_bucket = _DRY_POLICY_STATS[policy_name]
+    stats_bucket["avg"] += lr * (reward - stats_bucket["avg"])
+    stats_bucket["count"] += weight
+    stats_bucket["total_delta"] += float(delta) * weight
+    stats_bucket["total_reward"] += float(reward) * weight
+    street = getattr(player, "_last_hero_bet_street", None)
+    if street is None:
+        street = getattr(player, "street", None)
+    if street is not None:
+        street_bucket = stats_bucket["per_street"].setdefault(
+            int(street),
+            {"count": 0.0, "total_delta": 0.0, "total_reward": 0.0},
+        )
+        street_bucket["count"] += 1.0
+        street_bucket["total_delta"] += float(delta)
+        street_bucket["total_reward"] += float(reward)
 
 
 def _select_round_policy(player):

@@ -47,7 +47,7 @@ class ComebackPolicy:
                 opponent_discard=opponent_discard,
                 board_cards=board_cards,
             )
-            anti_rate = core._anti_exploit_rate(player) * 0.6
+            anti_rate = core._anti_exploit_rate(player) * 0.4
             best_i = core._anti_exploit_discard_index(equities, best_i, anti_rate)
             player.hero.last_discard_ev = lumberjack.record_discard_decision(
                 "ComebackPolicy",
@@ -74,7 +74,7 @@ class ComebackPolicy:
                 hero_hand,
                 board_cards,
                 samples=max(12, samples // 4),
-                max_seconds=min(0.008, max_seconds * 0.25),
+                max_seconds=min(0.01, max_seconds * 0.25),
             )
             if force_full_equity or abs(quick_equity - pot_odds) < 0.16:
                 equity = core._range_conditioned_equity(

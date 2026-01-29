@@ -1,9 +1,11 @@
 """Shared logging helpers referenced by the pokerbot."""
 
 from typing import Dict
+from contextlib import contextmanager
 
 
 _POLICY_ACTIONS: Dict[str, Dict[int, Dict[str, int]]] = {}
+_DRY_POLICY_ACTIONS: Dict[str, Dict[int, Dict[str, int]]] = {}
 _POLICY_EQUITY_ODDS: Dict[str, Dict[int, Dict[str, float]]] = {}
 _DISCARD_EV_STATS: Dict[str, Dict[int, Dict[str, float]]] = {}
 _HERO_ACTIONS: Dict[int, Dict[str, int]] = {}
@@ -13,6 +15,30 @@ _RIVER_VALUE_BET: Dict[str, float] = {"count": 0.0, "wins": 0.0, "sum_delta": 0.
 _THRESHOLD_STATS: Dict[str, Dict[int, Dict[str, float]]] = {}
 _EQUITY_ERROR_STATS: Dict[int, Dict[str, float]] = {}
 _FOLD_PREVENT_STATS: Dict[int, Dict[str, float]] = {}
+_LOG_SUPPRESSED = False
+_POLICY_ACTION_SUPPRESSED = False
+
+
+@contextmanager
+def suppress_logs():
+    global _LOG_SUPPRESSED
+    prev = _LOG_SUPPRESSED
+    _LOG_SUPPRESSED = True
+    try:
+        yield
+    finally:
+        _LOG_SUPPRESSED = prev
+
+
+@contextmanager
+def suppress_policy_actions():
+    global _POLICY_ACTION_SUPPRESSED
+    prev = _POLICY_ACTION_SUPPRESSED
+    _POLICY_ACTION_SUPPRESSED = True
+    try:
+        yield
+    finally:
+        _POLICY_ACTION_SUPPRESSED = prev
 
 
 def policy_summary(stats: Dict[str, Dict]) -> str:
@@ -104,9 +130,18 @@ def log(message: str) -> None:
 
 
 def record_policy_action(policy: str, street: int, action: str) -> None:
+    if _LOG_SUPPRESSED or _POLICY_ACTION_SUPPRESSED:
+        return
     if not policy:
         policy = "UnknownPolicy"
     street_bucket = _POLICY_ACTIONS.setdefault(policy, {}).setdefault(int(street), {})
+    street_bucket[action] = street_bucket.get(action, 0) + 1
+
+
+def record_dry_policy_action(policy: str, street: int, action: str) -> None:
+    if not policy:
+        policy = "UnknownPolicy"
+    street_bucket = _DRY_POLICY_ACTIONS.setdefault(policy, {}).setdefault(int(street), {})
     street_bucket[action] = street_bucket.get(action, 0) + 1
 
 
@@ -116,6 +151,8 @@ def record_equity_vs_pot_odds(
     equity: float,
     pot_odds: float,
 ) -> None:
+    if _LOG_SUPPRESSED:
+        return
     if equity is None or pot_odds is None:
         return
     if not policy:
@@ -139,6 +176,8 @@ def record_thresholds(
     raise_threshold: float,
     pot_odds: float,
 ) -> None:
+    if _LOG_SUPPRESSED:
+        return
     if not policy:
         policy = "UnknownPolicy"
     street_bucket = _THRESHOLD_STATS.setdefault(policy, {}).setdefault(
@@ -159,6 +198,8 @@ def record_thresholds(
 
 
 def record_equity_error(street: int, abs_error: float, samples: int, extended: bool = False) -> None:
+    if _LOG_SUPPRESSED:
+        return
     bucket = _EQUITY_ERROR_STATS.setdefault(
         int(street),
         {"count": 0.0, "sum_abs": 0.0, "sum_samples": 0.0, "extended": 0.0},
@@ -198,6 +239,19 @@ def policy_action_summary() -> str:
     lines = ["policy_actions:"]
     for policy in sorted(_POLICY_ACTIONS):
         policy_bucket = _POLICY_ACTIONS[policy]
+        for street in sorted(policy_bucket):
+            actions = policy_bucket[street]
+            parts = [f"{name}={actions[name]}" for name in sorted(actions)]
+            lines.append(f"  {policy} street={street} " + " ".join(parts))
+    return "\n".join(lines)
+
+
+def dry_policy_action_summary() -> str:
+    if not _DRY_POLICY_ACTIONS:
+        return "dry_policy_actions: none"
+    lines = ["dry_policy_actions:"]
+    for policy in sorted(_DRY_POLICY_ACTIONS):
+        policy_bucket = _DRY_POLICY_ACTIONS[policy]
         for street in sorted(policy_bucket):
             actions = policy_bucket[street]
             parts = [f"{name}={actions[name]}" for name in sorted(actions)]
@@ -396,6 +450,8 @@ def river_value_bet_summary() -> str:
 
 
 def record_discard_decision(policy: str, street: int, equities, chosen_idx: int):
+    if _LOG_SUPPRESSED:
+        return None
     if equities is None:
         return None
     equities = list(equities)

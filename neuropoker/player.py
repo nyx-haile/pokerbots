@@ -25,6 +25,7 @@ for key, value in _SINGLE_CORE_ENV.items():
 _LOG_ROUND_SUMMARY = os.environ.get("NEUROPOKER_LOG_ROUNDS", "0") == "1"
 _LOG_ROUND_EVERY = int(os.environ.get("NEUROPOKER_LOG_ROUND_EVERY", "200") or "200")
 _LOG_PREFLOP_DECISIONS = os.environ.get("NEUROPOKER_LOG_PREFLOP", "0") == "1"
+_DRY_MODE = os.environ.get("NEUROPOKER_DRY_MODE", "0") == "1"
 
 import strategy
 import stats
@@ -49,6 +50,7 @@ class Player(Bot):
         self.hero = ActorView()
         self.villain = ActorView()
         self.hero.enable_desperate = True
+        self.hero.desperate_state = "ready"
         self._logged_start = False
         self._last_board_len = 0
         self._pending_hero_discard = None
@@ -69,6 +71,8 @@ class Player(Bot):
         self._hero_bet_buckets = []
         self._hero_line_actions = {}
         self._river_value_bet = False
+        self._dry_policy_candidates = set()
+        self._dry_policy_weights = {}
         self._leak_stats = {
             "end_by_street": {},
             "hero_calls": {},
@@ -182,6 +186,8 @@ class Player(Bot):
         # bot has left to play this game
 
         self.round_num = game_state.round_num  # the round number from 1 to NUM_ROUNDS
+        if self.hero.bankroll >= 0:
+            self.hero.desperate_state = "ready"
 
         self.hero.hand = round_state.hands[active]  # your cards
 
@@ -205,6 +211,8 @@ class Player(Bot):
         self.hero.fold_prevented = False
         self.hero.fold_prevent_street = None
         self.hero.fold_prevent_action = None
+        self._dry_policy_candidates = set()
+        self._dry_policy_weights = {}
         strategy.begin_round(self)
         self.hero.last_discard_ev = None
         self.hero.raise_plan_target = None
@@ -347,6 +355,11 @@ class Player(Bot):
         if _LOG_ROUND_SUMMARY and self.round_num % _LOG_ROUND_EVERY == 1:
             lumberjack.log(f"round_over={self.round_num} delta={self.hero.delta}")
 
+        if _DRY_MODE and self._dry_policy_candidates:
+            for policy_name in sorted(self._dry_policy_candidates):
+                weight = self._dry_policy_weights.get(policy_name, 1.0)
+                strategy.update_dry_policy_from_round(self, policy_name, weight)
+
         if game_state.round_num >= NUM_ROUNDS:
             lumberjack.log(lumberjack.policy_summary(strategy._POLICY_STATS))
             lumberjack.log(lumberjack.leak_summary(self._leak_stats))
@@ -364,9 +377,15 @@ class Player(Bot):
             lumberjack.log(strategy.overbet_accuracy_summary())
             lumberjack.log(strategy.fold_equity_accuracy_summary())
             lumberjack.log(strategy.range_hint_accuracy_summary())
+            if _DRY_MODE:
+                lumberjack.log(lumberjack.policy_summary(strategy._DRY_POLICY_STATS).replace("policy_stats:", "dry_policy_stats:"))
+                lumberjack.log(lumberjack.dry_policy_action_summary())
 
-        if self.hero.policy_class == DesperatePolicy and self.hero.delta < 0:
-            self.hero.enable_desperate = False
+        if self.hero.policy_class == DesperatePolicy:
+            if self.hero.delta > 0:
+                self.hero.desperate_state = "won"
+            else:
+                self.hero.desperate_state = "lost"
 
         self.hero.policy_class = None
         self.hero.policy_round = None

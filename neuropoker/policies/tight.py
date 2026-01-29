@@ -111,7 +111,7 @@ class TightPolicy:
             raise_mult += adj
         for adj in (discard_bias, range_bias, opp_call_adj, call_variant, texture_call):
             call_mult += adj
-        
+
         # Tighten play when approaching win-lock (pot-aware)
         lead_adj = core._lead_protection_adjustment(player, pot_total)
         raise_mult += lead_adj
@@ -175,8 +175,8 @@ class TightPolicy:
         if core._should_pressure(player, equity):
             raise_mult -= core._PRESSURE_RAISE_BONUS
         # Lock defense: increase raise threshold when near danger zone
-        lock_defense_margin = core._lock_defense_raise_margin(player)
-        raise_mult += lock_defense_margin
+        # lock_defense_margin = core._lock_defense_raise_margin(player)
+        # raise_mult += lock_defense_margin
 
         raise_mult = max(0.4, min(1.6, raise_mult))
         call_mult = max(0.4, min(1.6, call_mult))
