@@ -130,14 +130,20 @@ class TightPolicy:
             policy_bias = core._policy_bias(player, equity, pot_odds)
             raise_mult -= policy_bias
             call_mult -= policy_bias
+        continue_ratio = None
         if player.hero.continue_cost > 0 and pot_total > 0:
             ratio = player.hero.continue_cost / float(pot_total)
+            continue_ratio = ratio
             if ratio >= 1.0:
                 call_mult += 0.10
             elif ratio >= 0.6:
                 call_mult += 0.07
             elif ratio >= 0.35:
                 call_mult += 0.04
+            if player.street <= 0:
+                if ratio <= 0.5:
+                    call_mult -= 0.05
+                    raise_mult -= 0.03
             call_overbet_adj, raise_overbet_adj = core._opponent_overbet_adjustments(
                 player,
                 player.hero.continue_cost,
@@ -153,6 +159,8 @@ class TightPolicy:
             call_mult += 0.04
         fold_bias = core._fold_bias_by_street(player.street)
         fold_bias_mult = 2.0
+        if player.street <= 0:
+            fold_bias_mult = 1.4
         if core.is_river(player.street) and player.hero.continue_cost > 0:
             fold_bias_mult = 3.0
         call_mult -= fold_bias * fold_bias_mult
@@ -195,6 +203,13 @@ class TightPolicy:
         call_margin -= river_raise_call_penalty
         if river_raise_extra > 0:
             call_margin -= river_raise_extra
+        if player.street <= 0 and player.hero.continue_cost > 0 and continue_ratio is not None:
+            if continue_ratio <= 0.35:
+                call_margin = max(0.0, call_margin - 0.025)
+            elif continue_ratio <= 0.5:
+                call_margin = max(0.0, call_margin - 0.015)
+            elif continue_ratio <= 0.75:
+                call_margin = max(0.0, call_margin - 0.01)
 
         raise_threshold = pot_odds + raise_margin
         call_threshold = pot_odds + call_margin
@@ -270,6 +285,15 @@ class TightPolicy:
             if player.hero.continue_cost == 0 and pot_total <= 8 and min_raise >= pot_total * 8:
                 if fold_conf < 0.5 or fold_width > 0.2:
                     raise_threshold += 0.08
+            aggro_gate = core._AGGRO_EQUITY
+            if player.hero.continue_cost == 0:
+                aggro_gate -= 0.06
+                if core._is_passive_line(line_key):
+                    aggro_gate -= 0.03
+                if core.is_flop(player.street):
+                    aggro_gate -= 0.02
+            aggro_gate = max(0.56, aggro_gate)
+
             if min_raise > raise_cap or min_raise > player.hero.stack // 3:
                 pass
             elif raise_war:
@@ -281,7 +305,7 @@ class TightPolicy:
                     return _record(RaiseAction(target), equity, pot_odds)
             elif core.is_river(player.street) and equity < core._RIVER_VALUE_FLOOR + opp_river_floor_adj:
                 pass
-            elif equity < core._AGGRO_EQUITY:
+            elif equity < aggro_gate:
                 pass
             elif equity > raise_threshold and min_raise > 0:
                 value_mult = core._value_extraction_multiplier(player)
