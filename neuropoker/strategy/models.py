@@ -783,7 +783,7 @@ def opponent_overbet_summary() -> str:
         overbet = bucket.get("overbet", 0.0)
         big = bucket.get("big", 0.0)
         lines.append(
-            f"  street={street} total={int(total)} overbet={overbet/total:.3f} big={big/total:.3f}"
+            f"  street={street} total={total:.1f} overbet={overbet/total:.3f} big={big/total:.3f}"
         )
     if len(lines) == 1:
         return "opponent_overbet: none"
@@ -873,7 +873,7 @@ def range_hint_accuracy_summary() -> str:
         return "range_hint_accuracy: none"
     brier = _RANGE_HINT_ACCURACY.get("sum_brier", 0.0) / count
     abs_err = _RANGE_HINT_ACCURACY.get("sum_abs", 0.0) / count
-    lines = [f"range_hint_accuracy: count={int(count)} brier={brier:.4f} abs_err={abs_err:.3f}"]
+    lines = [f"range_hint_accuracy: count={count:.1f} brier={brier:.4f} abs_err={abs_err:.3f}"]
     for street in sorted(_RANGE_HINT_ACCURACY_BY_STREET):
         bucket = _RANGE_HINT_ACCURACY_BY_STREET[street]
         street_count = bucket.get("count", 0.0)
@@ -882,7 +882,7 @@ def range_hint_accuracy_summary() -> str:
         street_brier = bucket.get("sum_brier", 0.0) / street_count
         street_abs = bucket.get("sum_abs", 0.0) / street_count
         lines.append(
-            f"  street={street} count={int(street_count)} brier={street_brier:.4f} abs_err={street_abs:.3f}"
+            f"  street={street} count={street_count:.1f} brier={street_brier:.4f} abs_err={street_abs:.3f}"
         )
     for line_key in sorted(_RANGE_HINT_ACCURACY_BY_LINE):
         bucket = _RANGE_HINT_ACCURACY_BY_LINE[line_key]
@@ -892,7 +892,7 @@ def range_hint_accuracy_summary() -> str:
         line_brier = bucket.get("sum_brier", 0.0) / line_count
         line_abs = bucket.get("sum_abs", 0.0) / line_count
         lines.append(
-            f"  line={line_key} count={int(line_count)} brier={line_brier:.4f} abs_err={line_abs:.3f}"
+            f"  line={line_key} count={line_count:.1f} brier={line_brier:.4f} abs_err={line_abs:.3f}"
         )
     return "\n".join(lines)
 

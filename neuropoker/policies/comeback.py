@@ -87,8 +87,8 @@ class ComebackPolicy:
             else:
                 equity = quick_equity
 
-        raise_margin = core._raise_margin_by_street(player.street) - 0.04
-        call_margin = core._call_margin_by_street(player.street) + 0.04
+        raise_margin = core._raise_margin_by_street(player.street) - 0.10
+        call_margin = core._call_margin_by_street(player.street) - 0.04
         discard_bias = core._opponent_discard_bias(player.street)
         range_bias = core._opponent_range_bias(player.street)
         texture_raise, texture_call, raise_cap_mult = core._board_texture_adjustments(board_cards)
@@ -119,6 +119,25 @@ class ComebackPolicy:
             if CheckAction in legal_actions and continue_cost == 0:
                 return _record(CheckAction(), equity, pot_odds)
 
+        if player.street <= 0:
+            if RaiseAction in legal_actions:
+                min_raise, max_raise = getattr(player.hero, "raise_bounds", (0, 0))
+                if min_raise > 0 and equity >= max(0.28, raise_threshold - 0.06):
+                    target = core._adaptive_raise_size(
+                        player,
+                        pot_total,
+                        min_raise,
+                        max_raise,
+                        equity,
+                        value_mult=1.05,
+                    )
+                    if target >= min_raise:
+                        return _record(RaiseAction(target), equity, pot_odds)
+            if CallAction in legal_actions and equity >= pot_odds + call_margin - 0.03:
+                return _record(CallAction(), equity, pot_odds)
+            if CheckAction in legal_actions and continue_cost == 0:
+                return _record(CheckAction(), equity, pot_odds)
+
         if RaiseAction in legal_actions:
             min_raise, max_raise = getattr(player.hero, "raise_bounds", (0, 0))
             raise_cap = max(4, int(pot_total // 2 * raise_cap_mult))
@@ -131,7 +150,7 @@ class ComebackPolicy:
             if fold_conf > 0.0 and fold_width > 0.25:
                 fold_rate = min(fold_rate, fold_low)
             if min_raise <= raise_cap and min_raise <= player.hero.stack // 2:
-                if equity >= max(0.42, raise_threshold):
+                if equity >= max(0.36, raise_threshold):
                     value_mult = 1.12 * core._value_extraction_multiplier(player)
                     target = core._adaptive_raise_size(
                         player,
@@ -147,7 +166,7 @@ class ComebackPolicy:
                         pass
                     elif target >= min_raise:
                         return _record(RaiseAction(target), equity, pot_odds)
-                if equity < pot_odds - 0.06 and fold_rate >= 0.22 and fold_width <= 0.35:
+                if equity < pot_odds - 0.01 and fold_rate >= 0.18 and fold_width <= 0.50:
                     target = core._adaptive_raise_size(
                         player,
                         pot_total,
@@ -160,11 +179,11 @@ class ComebackPolicy:
                         return _record(RaiseAction(target), equity, pot_odds)
 
         if continue_cost > 0 and FoldAction in legal_actions:
-            if equity < pot_odds + call_margin + 0.04:
+            if equity < pot_odds + call_margin:
                 return _record(FoldAction(), equity, pot_odds)
         if CheckAction in legal_actions and continue_cost == 0:
             return _record(CheckAction(), equity, pot_odds)
-        if CallAction in legal_actions and equity >= pot_odds + call_margin + 0.02:
+        if CallAction in legal_actions and equity >= pot_odds + call_margin - 0.02:
             return _record(CallAction(), equity, pot_odds)
         if CheckAction in legal_actions:
             return _record(CheckAction(), equity, pot_odds)

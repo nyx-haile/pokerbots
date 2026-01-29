@@ -33,6 +33,14 @@ def _preflop_open_decision(
     raise_strong, raise_medium, raise_light = _PREFLOP_RAISE_THRESHOLDS
     call_strong, call_medium, call_light = _PREFLOP_CALL_THRESHOLDS
     pos_raise_scale = 1.1 if not getattr(player.hero, "blind", False) else 0.9
+    behind_mult = 1.0
+    call_suppress = 1.0
+    hero_bankroll = getattr(player.hero, "bankroll", 0)
+    if hero_bankroll < 0:
+        deficit = min(60, -hero_bankroll)
+        effective_equity = min(1.0, effective_equity + 0.01 + 0.00025 * deficit)
+        behind_mult = 1.10 + 0.002 * min(30, deficit)
+        call_suppress = 0.95
     if RaiseAction in legal_actions:
         if effective_equity >= raise_strong:
             raise_prob = 0.8
@@ -50,6 +58,7 @@ def _preflop_open_decision(
             raise_prob *= 0.5
         raise_prob *= _preflop_raise_stack_scale(stack_ratio)
         raise_prob *= pos_raise_scale
+        raise_prob *= behind_mult
         if raise_prob > 0 and roll < raise_prob:
             _set_preflop_debug(player, bucket, roll)
             value_mult = _value_extraction_multiplier(player)
@@ -80,6 +89,7 @@ def _preflop_open_decision(
         if effective_equity < pot_odds - 0.05:
             call_prob *= 0.5
         call_prob *= _preflop_call_stack_scale(stack_ratio)
+        call_prob *= call_suppress
         if call_prob > 0 and roll < call_prob:
             _set_preflop_debug(player, bucket, roll)
             return CallAction()

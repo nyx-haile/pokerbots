@@ -133,8 +133,8 @@ def _policy_confidence(
         return _clamp(base, 0.05, 0.85)
     if name == "ComebackPolicy":
         deficit = max(0.0, -float(getattr(player.hero, "bankroll", 0)))
-        base = 0.35 + min(0.55, deficit / 60.0)
-        return _clamp(base, 0.3, 0.95)
+        base = 0.50 + min(0.40, deficit / 40.0)
+        return _clamp(base, 0.40, 0.99)
     return 0.35
 
 
@@ -487,11 +487,11 @@ def _is_comeback(player: PlayerView) -> bool:
         return False
     # Early/mid-game swing-back: trigger once we're meaningfully behind.
     if rounds_left >= int(NUM_ROUNDS * 0.7):
-        bankroll_trigger = 30
+        bankroll_trigger = 16
     elif rounds_left >= int(NUM_ROUNDS * 0.4):
-        bankroll_trigger = 24
+        bankroll_trigger = 12
     else:
-        bankroll_trigger = 18
+        bankroll_trigger = 8
     if hero_bankroll <= -bankroll_trigger:
         return True
     extra_loss = max(6, int(getattr(player.hero, "continue_cost", 0)))

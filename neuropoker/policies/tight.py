@@ -120,6 +120,12 @@ class TightPolicy:
         raise_mult += traj_raise_adj
         call_mult += traj_call_adj
 
+        hero_bankroll = getattr(player.hero, "bankroll", 0)
+        if hero_bankroll < -10:
+            deficit = min(120, -hero_bankroll)
+            raise_mult -= 0.08 + 0.002 * deficit
+            call_mult -= 0.02
+
         if core._USE_RANDOM_POLICY:
             policy_bias = core._policy_bias(player, equity, pot_odds)
             raise_mult -= policy_bias
