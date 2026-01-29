@@ -17,8 +17,15 @@ class BluffPolicy:
         pot_total = max(1, player.hero.pot_total)
         continue_cost = player.hero.continue_cost
 
-        def _record(action):
+        def _record(action, equity_value=None, pot_odds_value=None):
             lumberjack.record_policy_action("BluffPolicy", player.street, action.__class__.__name__)
+            if equity_value is not None and pot_odds_value is not None:
+                lumberjack.record_equity_vs_pot_odds(
+                    "BluffPolicy",
+                    player.street,
+                    equity_value,
+                    pot_odds_value,
+                )
             return action
 
         if DiscardAction in legal_actions:
@@ -28,6 +35,23 @@ class BluffPolicy:
             player.hero.last_discard_visible = player.hero.blind
             player.hero.discard_bluff = True
             return _record(DiscardAction(best_i))
+
+        if player.street <= 0:
+            equity = stats.preflop_strength(hero_hand)
+        else:
+            samples, max_seconds, discard_samples = core._equity_budget(player)
+            equity = core._range_conditioned_equity(
+                player,
+                hero_hand,
+                board_cards,
+                samples=max(10, samples // 6),
+                max_seconds=min(0.004, max_seconds * 0.2),
+            )
+
+        pot_odds = core.pot_odds_to_call(continue_cost, pot_total)
+        call_threshold = pot_odds + core._call_margin_by_street(player.street)
+        raise_threshold = pot_odds + core._raise_margin_by_street(player.street)
+        lumberjack.record_thresholds("BluffPolicy", player.street, call_threshold, raise_threshold, pot_odds)
 
         if RaiseAction in legal_actions:
             suppression = core._discard_bluff_suppression(player)
@@ -53,15 +77,15 @@ class BluffPolicy:
                             pass
                         elif target >= min_raise and fold_rate >= 0.35:
                             core._consume_discard_bluff(player)
-                            return _record(RaiseAction(target))
+                            return _record(RaiseAction(target), equity, pot_odds)
 
         if CheckAction in legal_actions and player.hero.continue_cost == 0:
-            return _record(CheckAction())
+            return _record(CheckAction(), equity, pot_odds)
         if CallAction in legal_actions:
-            return _record(CallAction())
+            return _record(CallAction(), equity, pot_odds)
         if CheckAction in legal_actions:
-            return _record(CheckAction())
-        return _record(FoldAction())
+            return _record(CheckAction(), equity, pot_odds)
+        return _record(FoldAction(), equity, pot_odds)
 
 
 def _neutral_discard_index(hero_hand, board_cards):

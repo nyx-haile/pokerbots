@@ -1,5 +1,5 @@
 """
-- DesperatePolicy: When opponent can lock the win (we must gamble)
+- ComebackPolicy: when opponent is near win-lock, swing back aggressively.
 """
 from skeleton.actions import CallAction, CheckAction, DiscardAction, FoldAction, RaiseAction
 
@@ -8,12 +8,9 @@ import random
 import stats
 from strategy import policy_api as core
 
-class DesperatePolicy:
-    """
-    Policy when opponent can lock the win but hasn't done so yet.
-    Play tighter on calls and more aggressive on raises to swing back from behind.
-    Uses tunable parameters from strategy module.
-    """
+
+class ComebackPolicy:
+    """Aggressive policy to swing back when near lock-loss."""
 
     @staticmethod
     def play(player):
@@ -22,17 +19,16 @@ class DesperatePolicy:
         board_cards = list(player.community)
 
         def _record(action, equity_value=None, pot_odds_value=None):
-            lumberjack.record_policy_action("DesperatePolicy", player.street, action.__class__.__name__)
+            lumberjack.record_policy_action("ComebackPolicy", player.street, action.__class__.__name__)
             if equity_value is not None and pot_odds_value is not None:
                 lumberjack.record_equity_vs_pot_odds(
-                    "DesperatePolicy",
+                    "ComebackPolicy",
                     player.street,
                     equity_value,
                     pot_odds_value,
                 )
             return action
 
-        # Handle discards normally
         if DiscardAction in legal_actions:
             opponent_discard = None
             if not player.hero.blind and len(board_cards) >= 3:
@@ -51,10 +47,10 @@ class DesperatePolicy:
                 opponent_discard=opponent_discard,
                 board_cards=board_cards,
             )
-            anti_rate = core._anti_exploit_rate(player) * 0.5
+            anti_rate = core._anti_exploit_rate(player) * 0.6
             best_i = core._anti_exploit_discard_index(equities, best_i, anti_rate)
             player.hero.last_discard_ev = lumberjack.record_discard_decision(
-                "DesperatePolicy",
+                "ComebackPolicy",
                 player.street,
                 equities,
                 best_i,
@@ -68,36 +64,19 @@ class DesperatePolicy:
         continue_cost = player.hero.continue_cost
         pot_odds = core.pot_odds_to_call(continue_cost, pot_total)
 
-        # Calculate equity
         if player.street <= 0:
             equity = stats.preflop_strength(hero_hand)
         else:
             samples, max_seconds, discard_samples = core._equity_budget(player)
-            samples, max_seconds, discard_samples = core._adjust_budget_for_turn_raise(
-                player,
-                pot_total,
-                samples,
-                max_seconds,
-                discard_samples,
-            )
             force_full_equity = core._is_large_raise(player, pot_total)
             quick_equity = core._range_conditioned_equity(
                 player,
                 hero_hand,
                 board_cards,
-                samples=max(10, samples // 4),
-                max_seconds=min(0.006, max_seconds * 0.25),
+                samples=max(12, samples // 4),
+                max_seconds=min(0.008, max_seconds * 0.25),
             )
-            # Use full equity calculation for close decisions
-            if force_full_equity:
-                equity = core._range_conditioned_equity(
-                    player,
-                    hero_hand,
-                    board_cards,
-                    samples=samples,
-                    max_seconds=max_seconds,
-                )
-            elif abs(quick_equity - pot_odds) < 0.12:
+            if force_full_equity or abs(quick_equity - pot_odds) < 0.16:
                 equity = core._range_conditioned_equity(
                     player,
                     hero_hand,
@@ -108,8 +87,8 @@ class DesperatePolicy:
             else:
                 equity = quick_equity
 
-        raise_margin = core._raise_margin_by_street(player.street)
-        call_margin = core._call_margin_by_street(player.street)
+        raise_margin = core._raise_margin_by_street(player.street) - 0.04
+        call_margin = core._call_margin_by_street(player.street) + 0.04
         discard_bias = core._opponent_discard_bias(player.street)
         range_bias = core._opponent_range_bias(player.street)
         texture_raise, texture_call, raise_cap_mult = core._board_texture_adjustments(board_cards)
@@ -118,59 +97,75 @@ class DesperatePolicy:
         opp_raise_adj, opp_call_adj, opp_river_raise_adj, opp_river_floor_adj = core._opponent_threshold_adjustments(player)
         raise_margin += opp_raise_adj
         call_margin += opp_call_adj
-        if player.hero.continue_cost > 0 and pot_total > 0:
+        if continue_cost > 0 and pot_total > 0:
             call_overbet_adj, raise_overbet_adj = core._opponent_overbet_adjustments(
                 player,
-                player.hero.continue_cost,
+                continue_cost,
                 pot_total,
             )
             call_margin += call_overbet_adj
             raise_margin += raise_overbet_adj
-        # Desperate mode: raise more, call less
-        call_margin += core._DESPERATE_CALL_PENALTY
-        raise_margin -= core._DESPERATE_RAISE_MARGIN
-        traj_raise_adj, traj_call_adj = core._trajectory_lock_adjustment(player)
-        raise_margin += traj_raise_adj
-        call_margin += traj_call_adj
+            call_margin += core._bet_escalation_penalty(player, continue_cost, pot_total)
 
-        # Defensive mode: only raise with very strong hands (tunable threshold)
+        raise_threshold = pot_odds + raise_margin
+        call_threshold = pot_odds + call_margin
+        lumberjack.record_thresholds("ComebackPolicy", player.street, call_threshold, raise_threshold, pot_odds)
+
+        hero_raises = getattr(player, "_hero_raise_count", {}).get(int(player.street), 0)
+        villain_raises = getattr(player, "_villain_raise_count", {}).get(int(player.street), 0)
+        if hero_raises >= 1 and villain_raises >= 1 and equity < 0.72:
+            if FoldAction in legal_actions and continue_cost > 0:
+                return _record(FoldAction(), equity, pot_odds)
+            if CheckAction in legal_actions and continue_cost == 0:
+                return _record(CheckAction(), equity, pot_odds)
+
         if RaiseAction in legal_actions:
             min_raise, max_raise = getattr(player.hero, "raise_bounds", (0, 0))
-            raise_threshold = max(core._DESPERATE_NUT_THRESHOLD, pot_odds + raise_margin)
-            if core.is_river(player.street):
-                raise_threshold += opp_river_raise_adj
             raise_cap = max(4, int(pot_total // 2 * raise_cap_mult))
-            hero_raises = getattr(player, "_hero_raise_count", {}).get(int(player.street), 0)
-            villain_raises = getattr(player, "_villain_raise_count", {}).get(int(player.street), 0)
-            if hero_raises >= 1 and villain_raises >= 1 and equity < 0.70:
-                pass
-            elif min_raise <= raise_cap and min_raise <= player.hero.stack // 3:
-                if equity >= raise_threshold:
-                    value_mult = core._value_extraction_multiplier(player)
-                    target = int(pot_total * 0.4 * value_mult)
-                    target = min(target, int(pot_total * 0.6))
-                    target = max(min_raise, min(max_raise, target))
-                    target = min(target, raise_cap)
-                    target = core._cap_raise_for_lock_defense(player, target)
+            fold_mean, fold_low, fold_high, fold_conf, fold_width = core.fold_equity_band(
+                min_raise, player.street, pot_total
+            )
+            fold_rate = fold_mean
+            if fold_rate <= 0.0:
+                fold_rate = core.fold_equity_estimate(None, min_raise, player.street, pot_total)
+            if fold_conf > 0.0 and fold_width > 0.25:
+                fold_rate = min(fold_rate, fold_low)
+            if min_raise <= raise_cap and min_raise <= player.hero.stack // 2:
+                if equity >= max(0.42, raise_threshold):
+                    value_mult = 1.12 * core._value_extraction_multiplier(player)
+                    target = core._adaptive_raise_size(
+                        player,
+                        pot_total,
+                        min_raise,
+                        max_raise,
+                        equity,
+                        value_mult=value_mult,
+                    )
+                    target = core._suppress_medium_raise_target(target, min_raise, pot_total, equity)
+                    target = core._adjust_value_raise(target, min_raise, max_raise, fold_rate, equity)
+                    if core.is_river(player.street) and equity < core._RIVER_VALUE_FLOOR + opp_river_floor_adj:
+                        pass
+                    elif target >= min_raise:
+                        return _record(RaiseAction(target), equity, pot_odds)
+                if equity < pot_odds - 0.06 and fold_rate >= 0.22 and fold_width <= 0.35:
+                    target = core._adaptive_raise_size(
+                        player,
+                        pot_total,
+                        min_raise,
+                        max_raise,
+                        equity,
+                        bluff=True,
+                    )
                     if target >= min_raise:
                         return _record(RaiseAction(target), equity, pot_odds)
 
-        # Only call if we have good equity relative to pot odds
-        if equity >= pot_odds + call_margin + 0.04:
-            if CallAction in legal_actions:
-                return _record(CallAction(), equity, pot_odds)
-            if CheckAction in legal_actions:
-                return _record(CheckAction(), equity, pot_odds)
-
-        # Check if free
+        if continue_cost > 0 and FoldAction in legal_actions:
+            if equity < pot_odds + call_margin + 0.04:
+                return _record(FoldAction(), equity, pot_odds)
         if CheckAction in legal_actions and continue_cost == 0:
             return _record(CheckAction(), equity, pot_odds)
-
-        # Prefer raise-or-fold when facing a bet
-        if continue_cost > 0 and FoldAction in legal_actions:
-            anti_rate = core._anti_exploit_rate(player) * 0.5
-            if anti_rate > 0 and CallAction in legal_actions and random.random() < anti_rate:
-                return _record(CallAction(), equity, pot_odds)
-            return _record(core._avoid_lock_win_fold(player, FoldAction()), equity, pot_odds)
-
-        return _record(core._avoid_lock_win_fold(player, FoldAction()), equity, pot_odds)
+        if CallAction in legal_actions and equity >= pot_odds + call_margin + 0.02:
+            return _record(CallAction(), equity, pot_odds)
+        if CheckAction in legal_actions:
+            return _record(CheckAction(), equity, pot_odds)
+        return _record(FoldAction(), equity, pot_odds)

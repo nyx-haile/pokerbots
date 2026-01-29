@@ -288,6 +288,33 @@ def _is_desperate(player: PlayerView) -> bool:
     return _opponent_can_lock_after_loss(player, extra_loss)
 
 
+def _is_comeback(player: PlayerView) -> bool:
+    hero_bankroll = getattr(player.hero, "bankroll", 0)
+    if hero_bankroll >= 0:
+        return False
+    round_num = getattr(player, "round_num", 0)
+    if round_num <= 0:
+        return False
+    rounds_left = max(0, NUM_ROUNDS - round_num)
+    if rounds_left <= 0:
+        return False
+    continue_cost = int(getattr(player.hero, "continue_cost", 0))
+    # If opponent can already lock on this loss, let DesperatePolicy handle it.
+    if _opponent_can_lock_after_loss(player, continue_cost):
+        return False
+    # Early/mid-game swing-back: trigger once we're meaningfully behind.
+    if rounds_left >= int(NUM_ROUNDS * 0.7):
+        bankroll_trigger = 30
+    elif rounds_left >= int(NUM_ROUNDS * 0.4):
+        bankroll_trigger = 24
+    else:
+        bankroll_trigger = 18
+    if hero_bankroll <= -bankroll_trigger:
+        return True
+    extra_loss = max(6, int(getattr(player.hero, "continue_cost", 0)))
+    return _opponent_can_lock_after_loss(player, extra_loss)
+
+
 def _is_near_desperate(player: PlayerView) -> bool:
     round_num = getattr(player, "round_num", 0)
     if round_num <= 0:
@@ -301,6 +328,7 @@ def _is_near_desperate(player: PlayerView) -> bool:
 def play(bot):
     from policies.lockwin import LockWinPolicy
     from policies.desperate import DesperatePolicy
+    from policies.comeback import ComebackPolicy
 
     stats._reset_action_timer()
 
@@ -311,6 +339,10 @@ def play(bot):
     if _is_desperate(bot) and bot.hero.enable_desperate:
         bot.hero.policy_class = DesperatePolicy
         return DesperatePolicy.play(bot)
+
+    if _is_comeback(bot):
+        bot.hero.policy_class = ComebackPolicy
+        return ComebackPolicy.play(bot)
 
     if _is_near_desperate(bot):
         bot.hero.near_desperate = True
