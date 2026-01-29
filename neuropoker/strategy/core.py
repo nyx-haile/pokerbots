@@ -1,9 +1,7 @@
 """Core strategy routing and lock-win logic."""
 
 from dataclasses import dataclass
-import copy
 import os
-import random
 from typing import Iterable, Sequence, Tuple
 
 from skeleton.actions import CallAction, CheckAction, DiscardAction, FoldAction, RaiseAction
@@ -24,11 +22,10 @@ from .math import (
     _board_texture_adjustments,
 )
 from .models import (
+    _policy_classes,
+    _select_round_policy,
     _choose_policy_for_round,
     _select_discard_asymmetric,
-    _opponent_weakness_score,
-    _bluff_allowed,
-    _opponent_fold_rate_band,
     opponent_range_hint,
     opponent_discard_range_adjustment,
     line_range_calibration,
@@ -38,7 +35,7 @@ from .models import (
 
 _DISABLE_PREFLOP_MIX = os.environ.get("NEUROPOKER_DISABLE_PREFLOP_MIX", "0") == "1"
 _ENABLE_LOCK_WIN = os.environ.get("NEUROPOKER_ENABLE_LOCK_WIN", "1") == "1"
-_DRY_MODE = os.environ.get("NEUROPOKER_DRY_MODE", "0") == "1"
+_LOCK_MARGIN = 2
 
 
 @dataclass
@@ -94,148 +91,6 @@ def _estimate_policy_equity(player: PlayerView) -> float:
     )
 
 
-def _clamp(value: float, low: float, high: float) -> float:
-    return max(low, min(high, value))
-
-
-def _shadow_player(player: PlayerView) -> PlayerView:
-    shadow = copy.copy(player)
-    shadow.hero = copy.deepcopy(player.hero)
-    shadow.villain = copy.deepcopy(player.villain)
-    if hasattr(player, "community"):
-        shadow.community = list(getattr(player, "community", []))
-    if hasattr(shadow.hero, "hand"):
-        shadow.hero.hand = list(getattr(player.hero, "hand", []))
-    if hasattr(shadow.hero, "legal_actions"):
-        shadow.hero.legal_actions = set(getattr(player.hero, "legal_actions", ()))
-    if hasattr(shadow.villain, "legal_actions"):
-        shadow.villain.legal_actions = set(getattr(player.villain, "legal_actions", ()))
-    return shadow
-
-
-def _policy_confidence(
-    player: PlayerView,
-    policy_class,
-    equity: float,
-    pot_odds: float,
-    weakness: float,
-    fold_conf: float,
-    fold_width: float,
-) -> float:
-    name = getattr(policy_class, "__name__", "")
-    if name == "TightPolicy":
-        edge = abs(equity - pot_odds)
-        return _clamp(0.45 + min(0.55, edge / 0.25), 0.2, 1.0)
-    if name == "BluffPolicy":
-        base = 0.15 + min(0.65, weakness * 1.1)
-        base += 0.2 * fold_conf
-        base -= 0.2 * fold_width
-        return _clamp(base, 0.05, 0.85)
-    if name == "ComebackPolicy":
-        deficit = max(0.0, -float(getattr(player.hero, "bankroll", 0)))
-        base = 0.50 + min(0.40, deficit / 40.0)
-        return _clamp(base, 0.40, 0.99)
-    return 0.35
-
-
-def _mixed_policy_action(player: PlayerView):
-    from policies.tight import TightPolicy
-    from policies.bluff import BluffPolicy
-    from policies.comeback import ComebackPolicy
-
-    with lumberjack.suppress_logs():
-        state = random.getstate()
-        try:
-            equity = _estimate_policy_equity(player)
-        finally:
-            random.setstate(state)
-    pot_total = max(1, getattr(player.hero, "pot_total", 1))
-    continue_cost = getattr(player.hero, "continue_cost", 0)
-    pot_odds = pot_odds_to_call(continue_cost, pot_total)
-    weakness = _opponent_weakness_score(player)
-    _, _, _, fold_conf, fold_width = _opponent_fold_rate_band(getattr(player, "street", 0), None)
-
-    candidates = [(TightPolicy, _policy_confidence(player, TightPolicy, equity, pot_odds, weakness, fold_conf, fold_width))]
-    if _is_comeback(player):
-        candidates.append(
-            (ComebackPolicy, _policy_confidence(player, ComebackPolicy, equity, pot_odds, weakness, fold_conf, fold_width))
-        )
-    chosen = _choose_policy_for_round(player, equity)
-    if chosen is BluffPolicy and _bluff_allowed(player):
-        candidates.append(
-            (BluffPolicy, _policy_confidence(player, BluffPolicy, equity, pot_odds, weakness, fold_conf, fold_width))
-        )
-
-    candidate_actions = []
-    for policy_class, confidence in candidates:
-        if confidence <= 0.0:
-            continue
-        shadow = _shadow_player(player)
-        with lumberjack.suppress_logs():
-            state = random.getstate()
-            try:
-                action = policy_class.play(shadow)
-            finally:
-                random.setstate(state)
-        candidate_actions.append((policy_class, action, confidence))
-
-    if not candidate_actions:
-        return None, None, []
-
-    legal_actions = set(getattr(player.hero, "legal_actions", ()))
-    action_weights = {}
-    raise_votes = []
-    discard_votes = {}
-    action_policy_weight = {}
-    for policy_class, action, confidence in candidate_actions:
-        action_cls = action.__class__
-        if action_cls not in legal_actions:
-            continue
-        action_name = action_cls.__name__
-        action_weights[action_name] = action_weights.get(action_name, 0.0) + confidence
-        action_policy_weight[(action_name, policy_class)] = action_policy_weight.get((action_name, policy_class), 0.0) + confidence
-        if isinstance(action, RaiseAction):
-            raise_votes.append((action.amount, confidence))
-        elif isinstance(action, DiscardAction):
-            discard_votes[action.card] = discard_votes.get(action.card, 0.0) + confidence
-
-    if not action_weights:
-        return None, None, candidate_actions
-
-    chosen_action_name = max(action_weights.items(), key=lambda kv: kv[1])[0]
-    chosen_policy = None
-    best_weight = -1.0
-    for (action_name, policy_class), weight in action_policy_weight.items():
-        if action_name == chosen_action_name and weight > best_weight:
-            best_weight = weight
-            chosen_policy = policy_class
-
-    if chosen_action_name == "RaiseAction":
-        if raise_votes:
-            total = sum(weight for _, weight in raise_votes)
-            avg_amount = int(round(sum(amount * weight for amount, weight in raise_votes) / max(1e-6, total)))
-            min_raise, max_raise = getattr(player.hero, "raise_bounds", (0, 0))
-            if min_raise:
-                avg_amount = max(min_raise, avg_amount)
-            if max_raise:
-                avg_amount = min(max_raise, avg_amount)
-            action = RaiseAction(avg_amount)
-        else:
-            action = RaiseAction(getattr(player.hero, "raise_bounds", (0, 0))[0])
-    elif chosen_action_name == "DiscardAction":
-        if discard_votes:
-            card_idx = max(discard_votes.items(), key=lambda kv: kv[1])[0]
-        else:
-            card_idx = 0
-        action = DiscardAction(card_idx)
-    elif chosen_action_name == "CallAction":
-        action = CallAction()
-    elif chosen_action_name == "CheckAction":
-        action = CheckAction()
-    else:
-        action = FoldAction()
-
-    return action, chosen_policy, candidate_actions
 
 
 def _range_conditioned_equity(
@@ -410,7 +265,7 @@ def _opponent_can_lock_after_loss(player: PlayerView, extra_loss: int) -> bool:
     loss_now += max(0, int(extra_loss))
     hero_bankroll = getattr(player.hero, "bankroll", 0)
     opponent_bankroll = -hero_bankroll + loss_now
-    return opponent_bankroll > _opponent_future_fold_loss(player, rounds_left)
+    return opponent_bankroll > _opponent_future_fold_loss(player, rounds_left) + _LOCK_MARGIN
 
 
 def _opponent_can_lock_after_fold(player: PlayerView) -> bool:
@@ -471,33 +326,6 @@ def _is_desperate(player: PlayerView) -> bool:
     return _opponent_can_lock_after_loss(player, extra_loss)
 
 
-def _is_comeback(player: PlayerView) -> bool:
-    hero_bankroll = getattr(player.hero, "bankroll", 0)
-    if hero_bankroll >= 0:
-        return False
-    round_num = getattr(player, "round_num", 0)
-    if round_num <= 0:
-        return False
-    rounds_left = max(0, NUM_ROUNDS - round_num)
-    if rounds_left <= 0:
-        return False
-    continue_cost = int(getattr(player.hero, "continue_cost", 0))
-    # If opponent can already lock on this loss, let DesperatePolicy handle it.
-    if _opponent_can_lock_after_loss(player, continue_cost):
-        return False
-    # Early/mid-game swing-back: trigger once we're meaningfully behind.
-    if rounds_left >= int(NUM_ROUNDS * 0.7):
-        bankroll_trigger = 16
-    elif rounds_left >= int(NUM_ROUNDS * 0.4):
-        bankroll_trigger = 12
-    else:
-        bankroll_trigger = 8
-    if hero_bankroll <= -bankroll_trigger:
-        return True
-    extra_loss = max(6, int(getattr(player.hero, "continue_cost", 0)))
-    return _opponent_can_lock_after_loss(player, extra_loss)
-
-
 def _is_near_desperate(player: PlayerView) -> bool:
     round_num = getattr(player, "round_num", 0)
     if round_num <= 0:
@@ -527,39 +355,22 @@ def play(bot):
     else:
         bot.hero.near_desperate = False
 
-    action, primary_policy, candidates = _mixed_policy_action(bot)
-    if action is not None:
-        if primary_policy is not None:
-            bot.hero.policy_class = primary_policy
-            bot.hero.policy_round = None
-            shadow = _shadow_player(bot)
-            with lumberjack.suppress_policy_actions():
-                primary_policy.play(shadow)
-        if _DRY_MODE and hasattr(bot, "_dry_policy_candidates"):
-            for policy_class, cand_action, confidence in candidates:
-                policy_name = getattr(policy_class, "__name__", "UnknownPolicy")
-                bot._dry_policy_candidates.add(policy_name)
-                if hasattr(bot, "_dry_policy_weights"):
-                    current = bot._dry_policy_weights.get(policy_name, 0.0)
-                    bot._dry_policy_weights[policy_name] = max(current, float(confidence))
-                lumberjack.record_dry_policy_action(
-                    policy_name,
-                    bot.street,
-                    cand_action.__class__.__name__,
-                )
+    policy_class = _select_round_policy(bot)
+    if not policy_class and bot.street <= 0:
+        policy_class = _maybe_set_policy(bot)
+    if not policy_class and _discard_action_required(bot):
+        policy_class = _maybe_set_policy(bot)
+        if not policy_class:
+            policy_class = _policy_classes()[1]
+            bot.hero.policy_class = policy_class
+            bot.hero.policy_round = getattr(bot, "round_num", 0)
+            bot.hero.discard_bluff = False
+    if policy_class:
+        action = policy_class.play(bot)
         if _discard_action_required(bot):
             action = _force_discard_if_needed(bot, action)
-        bot.hero.discard_bluff = (
-            primary_policy is not None
-            and primary_policy.__name__ == "BluffPolicy"
-            and isinstance(action, DiscardAction)
-        )
-        if primary_policy is not None:
-            lumberjack.record_policy_action(
-                getattr(primary_policy, "__name__", "UnknownPolicy"),
-                bot.street,
-                action.__class__.__name__,
-            )
+        if policy_class.__name__ == "BluffPolicy" and isinstance(action, DiscardAction):
+            bot.hero.discard_bluff = True
         return _avoid_lock_win_fold(bot, action)
 
     legal_actions = set(bot.hero.legal_actions)

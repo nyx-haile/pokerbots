@@ -70,6 +70,10 @@ def _preflop_open_decision(
                 equity,
                 value_mult=value_mult,
             )
+            if min_raise > 0 and target <= int(min_raise * 1.2):
+                target = max(min_raise, int(min_raise * 1.6))
+            if max_raise > 0:
+                target = min(max_raise, target)
             if target > 0:
                 return RaiseAction(target)
 
