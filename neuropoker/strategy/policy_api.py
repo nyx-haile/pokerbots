@@ -64,6 +64,8 @@ from .models import (  # noqa: F401
     _should_pressure,
     _tight_equity_threshold,
     _value_extraction_multiplier,
+    _anti_exploit_rate,
+    _anti_exploit_discard_index,
 )
 from .preflop import _preflop_open_decision  # noqa: F401
 

@@ -278,6 +278,45 @@ def _opponent_bluff_adjustment(player) -> float:
     return bias
 
 
+def _opponent_aggression_rate(street: Optional[int]) -> Tuple[float, float]:
+    if street is None:
+        return 0.0, 0.0
+    bucket = _OPPONENT_RANGE_MODEL["by_street"].get(street, {})
+    total = bucket.get("total", 0.0)
+    raises = bucket.get("raises", 0.0)
+    if total < 6:
+        return 0.0, 0.0
+    rate = raises / total
+    confidence = min(1.0, total / 20.0)
+    return rate, confidence
+
+
+def _anti_exploit_rate(player) -> float:
+    street = getattr(player, "street", None)
+    if street is None or street <= 0:
+        return 0.0
+    rate, confidence = _opponent_aggression_rate(street)
+    if rate <= 0.3 or confidence <= 0.0:
+        return 0.0
+    excess = max(0.0, rate - 0.3)
+    anti = excess * 0.5 * confidence
+    return max(0.0, min(0.12, anti))
+
+
+def _anti_exploit_discard_index(equities: Sequence[float], best_idx: int, rate: float) -> int:
+    if rate <= 0.0 or not equities or best_idx is None:
+        return best_idx
+    if len(equities) < 2:
+        return best_idx
+    if random.random() >= rate:
+        return best_idx
+    ranked = sorted(range(len(equities)), key=equities.__getitem__, reverse=True)
+    for idx in ranked:
+        if idx != best_idx:
+            return idx
+    return best_idx
+
+
 def _bluff_threshold(player) -> float:
     _ensure_policy_stats()
     bluff_cls, tight_cls = _policy_classes()

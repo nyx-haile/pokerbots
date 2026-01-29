@@ -1,6 +1,7 @@
 from skeleton.actions import CallAction, CheckAction, DiscardAction, FoldAction, RaiseAction
 
 import lumberjack
+import random
 import stats
 from strategy import policy_api as core
 
@@ -43,6 +44,8 @@ class TightPolicy:
                 opponent_discard=opponent_discard,
                 board_cards=board_cards,
             )
+            anti_rate = core._anti_exploit_rate(player)
+            best_i = core._anti_exploit_discard_index(equities, best_i, anti_rate)
             player.hero.last_discard_ev = lumberjack.record_discard_decision(
                 "TightPolicy",
                 player.street,
@@ -286,9 +289,15 @@ class TightPolicy:
             and equity < hard_fold_equity
             and FoldAction in legal_actions
         ):
+            anti_rate = core._anti_exploit_rate(player)
+            if anti_rate > 0 and CallAction in legal_actions and random.random() < anti_rate:
+                return _record(CallAction(), equity, pot_odds)
             return _record(FoldAction(), equity, pot_odds)
 
         if equity < pot_odds - call_margin and FoldAction in legal_actions:
+            anti_rate = core._anti_exploit_rate(player)
+            if anti_rate > 0 and CallAction in legal_actions and random.random() < anti_rate:
+                return _record(CallAction(), equity, pot_odds)
             return _record(FoldAction(), equity, pot_odds)
 
         if CheckAction in legal_actions and player.hero.continue_cost == 0:

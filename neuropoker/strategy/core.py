@@ -27,6 +27,8 @@ from .models import (
     _select_discard_asymmetric,
     opponent_range_hint,
     opponent_discard_range_adjustment,
+    _anti_exploit_rate,
+    _anti_exploit_discard_index,
 )
 
 _DISABLE_PREFLOP_MIX = os.environ.get("NEUROPOKER_DISABLE_PREFLOP_MIX", "0") == "1"
@@ -331,6 +333,8 @@ def _force_discard_if_needed(player: PlayerView, action):
         opponent_discard=opponent_discard,
         board_cards=board_cards,
     )
+    anti_rate = _anti_exploit_rate(player)
+    best_i = _anti_exploit_discard_index(equities, best_i, anti_rate)
     player.hero.last_discard_ev = lumberjack.record_discard_decision(
         getattr(player.hero, "policy_class", None).__name__ if getattr(player.hero, "policy_class", None) else None,
         player.street,

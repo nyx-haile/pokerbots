@@ -4,6 +4,7 @@
 from skeleton.actions import CallAction, CheckAction, DiscardAction, FoldAction, RaiseAction
 
 import lumberjack
+import random
 import stats
 from strategy import policy_api as core
 
@@ -50,6 +51,8 @@ class DesperatePolicy:
                 opponent_discard=opponent_discard,
                 board_cards=board_cards,
             )
+            anti_rate = core._anti_exploit_rate(player) * 0.5
+            best_i = core._anti_exploit_discard_index(equities, best_i, anti_rate)
             player.hero.last_discard_ev = lumberjack.record_discard_decision(
                 "DesperatePolicy",
                 player.street,
@@ -165,6 +168,9 @@ class DesperatePolicy:
         # Fold marginal hands - don't give opponent chips
         if equity < pot_odds - 0.05:
             # But use lock defense to avoid giving them win-lock
+            anti_rate = core._anti_exploit_rate(player) * 0.5
+            if anti_rate > 0 and CallAction in legal_actions and random.random() < anti_rate:
+                return _record(CallAction(), equity, pot_odds)
             return _record(core._avoid_lock_win_fold(player, FoldAction()), equity, pot_odds)
 
         # Default to lock-aware fold
