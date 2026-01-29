@@ -75,6 +75,15 @@ _ACCURACY_MIN_OBS = {
 _ACCURACY_MIN_CONFIDENCE = 0.25
 _RANGE_HINT_MIN_LINE_OBS = 10
 _LINE_PRIOR_MIN_OBS = 12
+_OVERBET_MIN_POT = 6
+_FOLD_EQUITY_MIN_POT = 6
+_OVERBET_ADJ_MIN_OBS = 8
+_FOLD_EQUITY_MIN_OBS = 8
+_RANGE_HINT_MIN_SHOWDOWNS = 5
+_OVERBET_PRIOR_ALPHA = 1.0
+_OVERBET_PRIOR_BETA = 3.0
+_FOLD_PRIOR_ALPHA = 1.0
+_FOLD_PRIOR_BETA = 1.5
 _RANGE_MODEL_DECAY = 0.99
 _OPPONENT_RANGE_MODEL = {
     "by_street": {},
@@ -385,9 +394,9 @@ def _opponent_fold_rate(street: int, bucket_key: Optional[str]) -> float:
         counts = bucket.get(bucket_key, {})
         total = counts.get("fold", 0.0) + counts.get("call", 0.0)
         folds = counts.get("fold", 0.0)
-    if total < 5:
+    if total < _FOLD_EQUITY_MIN_OBS:
         return 0.0
-    return folds / total
+    return (folds + _FOLD_PRIOR_ALPHA) / (total + _FOLD_PRIOR_ALPHA + _FOLD_PRIOR_BETA)
 
 
 def _opponent_call_rate(street: Optional[int]) -> float:
@@ -425,6 +434,8 @@ def record_opponent_bet_response(street: int, bet_size: int, pot_total: int, fol
 def record_opponent_bet_size(street: int, bet_size: int, pot_total: int) -> None:
     if bet_size <= 0:
         return
+    if pot_total < _OVERBET_MIN_POT:
+        return
     pot = max(1, pot_total)
     ratio = bet_size / float(pot)
     street_bucket = _OPPONENT_BET_SIZE_MODEL["by_street"].setdefault(
@@ -440,6 +451,8 @@ def record_opponent_bet_size(street: int, bet_size: int, pot_total: int) -> None
 
 def record_overbet_observation(street: int, bet_size: int, pot_total: int) -> None:
     if bet_size <= 0:
+        return
+    if pot_total < _OVERBET_MIN_POT:
         return
     pot = max(1, pot_total)
     ratio = bet_size / float(pot)
@@ -533,6 +546,8 @@ def _bet_size_bucket(bet_size: int, pot_total: int) -> str:
 
 
 def fold_equity_estimate(player_id, bet_size: int, street: int, pot_total: int) -> float:
+    if pot_total < _FOLD_EQUITY_MIN_POT:
+        return 0.0
     bucket_key = _bet_size_bucket(bet_size, pot_total)
     fold_rate = _opponent_fold_rate(street, bucket_key)
     if fold_rate > 0.0:
@@ -557,7 +572,9 @@ def opponent_overbet_rate(street: Optional[int]) -> Tuple[float, float, float]:
     if total < 3:
         return 0.0, 0.0, 0.0
     confidence = min(1.0, total / 12.0)
-    return overbet / total, big / total, confidence
+    overbet_rate = (overbet + _OVERBET_PRIOR_ALPHA) / (total + _OVERBET_PRIOR_ALPHA + _OVERBET_PRIOR_BETA)
+    big_rate = (big + _OVERBET_PRIOR_ALPHA) / (total + _OVERBET_PRIOR_ALPHA + _OVERBET_PRIOR_BETA)
+    return overbet_rate, big_rate, confidence
 
 
 def opponent_overbet_summary() -> str:
@@ -718,6 +735,9 @@ def _opponent_overbet_adjustments(player, bet_size: int, pot_total: int) -> Tupl
     rate, big_rate, confidence = opponent_overbet_rate(getattr(player, "street", None))
     if confidence <= 0.0:
         return 0.0, 0.0
+    street_total = _OPPONENT_BET_SIZE_MODEL["by_street"].get(getattr(player, "street", None), {}).get("total", 0.0)
+    if street_total < _OVERBET_ADJ_MIN_OBS:
+        return 0.0, 0.0
     call_adj = 0.0
     raise_adj = 0.0
     if rate < 0.2:
@@ -808,12 +828,12 @@ def opponent_range_hint(line_key: Optional[str] = None) -> Tuple[float, float]:
     inferred = _OPPONENT_RANGE_MODEL["inferred"]
     inferred_total = inferred["total"]
     if inferred_total > 0:
-        inferred_avg = inferred["sum"] / inferred_total
+        inferred_avg = (inferred["sum"] + 0.5 * 2.0) / (inferred_total + 2.0)
     else:
         inferred_avg = 0.5
     showdowns = _OPPONENT_RANGE_MODEL["showdowns"]
     total_showdowns = showdowns["wins"] + showdowns["losses"]
-    if total_showdowns > 0:
+    if total_showdowns >= _RANGE_HINT_MIN_SHOWDOWNS:
         showdown_bias = (showdowns["wins"] - showdowns["losses"]) / total_showdowns
         showdown_avg = 0.5 + 0.25 * showdown_bias
     else:
@@ -1000,6 +1020,10 @@ def _ladder_raise_target(player, ideal_target: int, min_raise: int, max_raise: i
         player.hero.raise_plan_street = None
         return max(min_raise, min(max_raise, int(plan_target)))
     if continue_cost == 0:
+        fold_rate = fold_equity_estimate(None, min_raise, street, getattr(player.hero, "pot_total", 0))
+        _, _, confidence = opponent_overbet_rate(street)
+        if fold_rate < 0.35 or confidence < 0.35:
+            return ideal_target
         player.hero.raise_plan_target = ideal_target
         player.hero.raise_plan_street = street
         if ideal_target <= int(min_raise * 1.2):

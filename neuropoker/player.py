@@ -322,6 +322,7 @@ class Player(Bot):
             lumberjack.log(lumberjack.policy_action_summary())
             lumberjack.log(lumberjack.aggression_ratio_summary())
             lumberjack.log(lumberjack.equity_vs_pot_odds_summary())
+            lumberjack.log(lumberjack.threshold_summary())
             lumberjack.log(lumberjack.discard_ev_summary())
             lumberjack.log(lumberjack.showdown_line_summary())
             lumberjack.log(lumberjack.bet_size_ev_summary())

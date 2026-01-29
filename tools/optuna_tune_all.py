@@ -273,14 +273,14 @@ def main():
             )
 
         if batch in ("all", "margins"):
-            raise_margin_pre = trial.suggest_float("raise_margin_pre", 0.05, 0.35, step=0.05)
-            raise_margin_post = trial.suggest_float("raise_margin_post", 0.05, 0.25, step=0.05)
-            raise_margin_turn = trial.suggest_float("raise_margin_turn", 0.08, 0.3, step=0.05)
-            raise_margin_river = trial.suggest_float("raise_margin_river", 0.08, 0.3, step=0.05)
-            call_margin_pre = trial.suggest_float("call_margin_pre", 0.0, 0.15, step=0.05)
-            call_margin_post = trial.suggest_float("call_margin_post", 0.0, 0.12, step=0.05)
-            call_margin_turn = trial.suggest_float("call_margin_turn", 0.0, 0.15, step=0.05)
-            call_margin_river = trial.suggest_float("call_margin_river", 0.0, 0.18, step=0.05)
+            raise_margin_pre = trial.suggest_float("raise_margin_pre", 0.04, 0.25, step=0.05)
+            raise_margin_post = trial.suggest_float("raise_margin_post", 0.04, 0.20, step=0.05)
+            raise_margin_turn = trial.suggest_float("raise_margin_turn", 0.06, 0.22, step=0.05)
+            raise_margin_river = trial.suggest_float("raise_margin_river", 0.06, 0.24, step=0.05)
+            call_margin_pre = trial.suggest_float("call_margin_pre", 0.02, 0.10, step=0.02)
+            call_margin_post = trial.suggest_float("call_margin_post", 0.01, 0.08, step=0.02)
+            call_margin_turn = trial.suggest_float("call_margin_turn", 0.01, 0.10, step=0.02)
+            call_margin_river = trial.suggest_float("call_margin_river", 0.01, 0.12, step=0.02)
             env_vars.append(
                 "NEUROPOKER_RAISE_MARGIN_BY_STREET=%.4f,%.4f,%.4f,%.4f"
                 % (raise_margin_pre, raise_margin_post, raise_margin_turn, raise_margin_river)

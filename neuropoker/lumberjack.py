@@ -10,6 +10,7 @@ _HERO_ACTIONS: Dict[int, Dict[str, int]] = {}
 _SHOWDOWN_LINES: Dict[str, Dict[str, float]] = {}
 _BET_SIZE_EV: Dict[int, Dict[str, Dict[str, float]]] = {}
 _RIVER_VALUE_BET: Dict[str, float] = {"count": 0.0, "wins": 0.0, "sum_delta": 0.0}
+_THRESHOLD_STATS: Dict[str, Dict[int, Dict[str, float]]] = {}
 
 
 def policy_summary(stats: Dict[str, Dict]) -> str:
@@ -129,6 +130,32 @@ def record_equity_vs_pot_odds(
     street_bucket["sum_abs_diff"] += abs(diff)
 
 
+def record_thresholds(
+    policy: str,
+    street: int,
+    call_threshold: float,
+    raise_threshold: float,
+    pot_odds: float,
+) -> None:
+    if not policy:
+        policy = "UnknownPolicy"
+    street_bucket = _THRESHOLD_STATS.setdefault(policy, {}).setdefault(
+        int(street),
+        {
+            "count": 0.0,
+            "sum_call": 0.0,
+            "sum_raise": 0.0,
+            "sum_call_drift": 0.0,
+            "sum_raise_drift": 0.0,
+        },
+    )
+    street_bucket["count"] += 1.0
+    street_bucket["sum_call"] += float(call_threshold)
+    street_bucket["sum_raise"] += float(raise_threshold)
+    street_bucket["sum_call_drift"] += float(call_threshold - pot_odds)
+    street_bucket["sum_raise_drift"] += float(raise_threshold - pot_odds)
+
+
 def record_hero_action(street: int, action: str) -> None:
     street_bucket = _HERO_ACTIONS.setdefault(int(street), {})
     street_bucket[action] = street_bucket.get(action, 0) + 1
@@ -183,6 +210,29 @@ def equity_vs_pot_odds_summary() -> str:
                 f"  {policy} street={street} count={int(count)} "
                 f"equity={avg_equity:.3f} pot_odds={avg_pot_odds:.3f} "
                 f"diff={avg_diff:.3f} abs_diff={avg_abs_diff:.3f}"
+            )
+    return "\n".join(lines)
+
+
+def threshold_summary() -> str:
+    if not _THRESHOLD_STATS:
+        return "thresholds: none"
+    lines = ["thresholds:"]
+    for policy in sorted(_THRESHOLD_STATS):
+        policy_bucket = _THRESHOLD_STATS[policy]
+        for street in sorted(policy_bucket):
+            bucket = policy_bucket[street]
+            count = bucket.get("count", 0.0)
+            if count <= 0:
+                continue
+            avg_call = bucket.get("sum_call", 0.0) / count
+            avg_raise = bucket.get("sum_raise", 0.0) / count
+            avg_call_drift = bucket.get("sum_call_drift", 0.0) / count
+            avg_raise_drift = bucket.get("sum_raise_drift", 0.0) / count
+            lines.append(
+                f"  {policy} street={street} count={int(count)} "
+                f"call={avg_call:.3f} raise={avg_raise:.3f} "
+                f"call_drift={avg_call_drift:.3f} raise_drift={avg_raise_drift:.3f}"
             )
     return "\n".join(lines)
 

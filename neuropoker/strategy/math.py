@@ -183,28 +183,28 @@ _BLUFF_RAISE_FRACTION = _load_float_list(
 _RAISE_MARGIN_BY_STREET = _load_float_list(
     "NEUROPOKER_RAISE_MARGIN_BY_STREET",
     4,
-    (0.2, 0.15, 0.18, 0.16),
+    (0.14, 0.11, 0.13, 0.13),
     param_key="raise_margin_by_street",
     param_values=_PARAM_VALUES,
 )
 _CALL_MARGIN_BY_STREET = _load_float_list(
     "NEUROPOKER_CALL_MARGIN_BY_STREET",
     4,
-    (0.03, 0.02, 0.03, 0.04),
+    (0.04, 0.03, 0.04, 0.05),
     param_key="call_margin_by_street",
     param_values=_PARAM_VALUES,
 )
 _RAISE_CALL_RATIO = _load_float_list(
     "NEUROPOKER_RAISE_CALL_RATIO",
     1,
-    (0.7,),
+    (0.65,),
     param_key="raise_call_ratio",
     param_values=_PARAM_VALUES,
 )[0]
 _RAISE_CALL_PENALTY = _load_float_list(
     "NEUROPOKER_RAISE_CALL_PENALTY",
     1,
-    (0.12,),
+    (0.10,),
     param_key="raise_call_penalty",
     param_values=_PARAM_VALUES,
 )[0]
@@ -218,7 +218,7 @@ _TURN_RAISE_RATIO = _load_float_list(
 _TURN_RAISE_EXTRA = _load_float_list(
     "NEUROPOKER_TURN_RAISE_EXTRA",
     1,
-    (0.10,),
+    (0.08,),
     param_key="turn_raise_extra",
     param_values=_PARAM_VALUES,
 )[0]
@@ -260,42 +260,42 @@ _DISCARD_BLUFF_RAISE_FRACTION = _load_float_list(
 _NUT_RAISE_EQUITY = _load_float_list(
     "NEUROPOKER_NUT_RAISE_EQUITY",
     1,
-    (0.86,),
+    (0.84,),
     param_key="nut_raise_equity",
     param_values=_PARAM_VALUES,
 )[0]
 _AGGRO_EQUITY = _load_float_list(
     "NEUROPOKER_AGGRO_EQUITY",
     1,
-    (0.7,),
+    (0.68,),
     param_key="aggro_equity",
     param_values=_PARAM_VALUES,
 )[0]
 _AGGRO_RAISE_BONUS = _load_float_list(
     "NEUROPOKER_AGGRO_RAISE_BONUS",
     1,
-    (0.05,),
+    (0.04,),
     param_key="aggro_raise_bonus",
     param_values=_PARAM_VALUES,
 )[0]
 _HARD_FOLD_EQUITY_BY_STREET = _load_float_list(
     "NEUROPOKER_HARD_FOLD_EQUITY_BY_STREET",
     3,
-    (0.26, 0.30, 0.33),
+    (0.24, 0.28, 0.31),
     param_key="hard_fold_equity_by_street",
     param_values=_PARAM_VALUES,
 )
 _HARD_FOLD_POT_ODDS_MIN = _load_float_list(
     "NEUROPOKER_HARD_FOLD_POT_ODDS_MIN",
     1,
-    (0.06,),
+    (0.05,),
     param_key="hard_fold_pot_odds_min",
     param_values=_PARAM_VALUES,
 )[0]
 _FOLD_BIAS_BY_STREET = _load_float_list(
     "NEUROPOKER_FOLD_BIAS_BY_STREET",
     4,
-    (0.0, 0.02, 0.03, 0.04),
+    (0.0, 0.015, 0.02, 0.025),
     param_key="fold_bias_by_street",
     param_values=_PARAM_VALUES,
 )
@@ -330,21 +330,21 @@ _BLUFF_DISABLE_BEHIND = _load_float_list(
 _PRESSURE_EQUITY_THRESHOLD = _load_float_list(
     "NEUROPOKER_PRESSURE_EQUITY_THRESHOLD",
     1,
-    (0.62,),
+    (0.60,),
     param_key="pressure_equity_threshold",
     param_values=_PARAM_VALUES,
 )[0]
 _PRESSURE_RAISE_BONUS = _load_float_list(
     "NEUROPOKER_PRESSURE_RAISE_BONUS",
     1,
-    (0.05,),
+    (0.04,),
     param_key="pressure_raise_bonus",
     param_values=_PARAM_VALUES,
 )[0]
 _PRESSURE_FOLDRATE_MIN = _load_float_list(
     "NEUROPOKER_PRESSURE_FOLDRATE_MIN",
     1,
-    (0.12,),
+    (0.10,),
     param_key="pressure_foldrate_min",
     param_values=_PARAM_VALUES,
 )[0]
@@ -418,7 +418,7 @@ _DESPERATE_CALL_PENALTY = _load_float_list(
 _RIVER_VALUE_FLOOR = _load_float_list(
     "NEUROPOKER_RIVER_VALUE_FLOOR",
     1,
-    (0.74,),
+    (0.72,),
 )[0]
 _RIVER_MAX_RAISE_FRAC = _load_float_list(
     "NEUROPOKER_RIVER_MAX_RAISE_FRAC",
@@ -817,6 +817,42 @@ def _adjust_value_raise(
         target = int(target * 0.8)
     target = max(min_raise, target)
     return min(target, max_raise)
+
+
+def _line_call_penalty(line_key: Optional[str], street: int) -> float:
+    if street < 5 or not line_key:
+        return 0.0
+    if line_key in ("C-C-K-K", "C-K-C-K", "K-K-K-K"):
+        return 0.06 if street >= 6 else 0.04
+    return 0.0
+
+
+def _confidence_call_penalty(confidence: float, street: int) -> float:
+    if street < 5:
+        return 0.0
+    if confidence >= 0.35:
+        return 0.0
+    if confidence < 0.15:
+        return 0.05 if street >= 6 else 0.035
+    return 0.03 if street >= 6 else 0.02
+
+
+def _suppress_medium_raise_target(
+    target: int,
+    min_raise: int,
+    pot_total: int,
+    equity: float,
+) -> int:
+    if pot_total <= 0 or target <= 0:
+        return target
+    ratio = target / float(max(1, pot_total))
+    if ratio <= 0.5 or ratio > 1.0:
+        return target
+    if equity >= 0.74:
+        return target
+    if equity >= 0.62:
+        return max(min_raise, int(pot_total * 0.45))
+    return max(min_raise, int(pot_total * 0.32))
 
 
 @lru_cache(maxsize=10_000)

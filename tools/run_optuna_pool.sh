@@ -20,15 +20,12 @@ MATCH_SUBSAMPLE="${MATCH_SUBSAMPLE:-1.0}"
 MATCH_SAMPLE_MIN="${MATCH_SAMPLE_MIN:-1}"
 
 if [[ -z "${BOT_B_POOL}" ]]; then
-  _default_pool=()
-  for _path in baselines/*; do
-    if [[ -d "${_path}" && -d "${_path}/neuropoker" ]]; then
-      _default_pool+=("${_path}/neuropoker")
-    fi
-  done
-  if ((${#_default_pool[@]} > 0)); then
-    BOT_B_POOL="$(IFS=,; echo "${_default_pool[*]}")"
-  fi
+  _default_pool=(
+    "baselines/217494a/neuropoker"
+    "baselines/02f38b1/neuropoker"
+    "baselines/4340705/neuropoker"
+  )
+  BOT_B_POOL="$(IFS=,; echo "${_default_pool[*]}")"
 fi
 
 if [[ -z "${BOT_B}" && -n "${BOT_B_POOL}" ]]; then

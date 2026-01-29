@@ -87,8 +87,8 @@ class TightPolicy:
             equity = quick_equity
 
         pot_odds = core.pot_odds_to_call(player.hero.continue_cost, pot_total)
-        raise_margin = core._raise_margin_by_street(player.street)
-        call_margin = core._call_margin_by_street(player.street)
+        base_raise_margin = core._raise_margin_by_street(player.street)
+        base_call_margin = core._call_margin_by_street(player.street)
         discard_bias = core._opponent_discard_bias(player.street)
         range_bias = core._opponent_range_bias(player.street)
         texture_raise, texture_call, raise_cap_mult = core._board_texture_adjustments(board_cards)
@@ -101,65 +101,75 @@ class TightPolicy:
         )
         if player.street <= 0 and equity_bias:
             equity = max(0.0, min(1.0, equity + equity_bias))
-        raise_margin += discard_bias
-        call_margin += discard_bias
-        raise_margin += range_bias
-        call_margin += range_bias
         opp_raise_adj, opp_call_adj, opp_river_raise_adj, opp_river_floor_adj = core._opponent_threshold_adjustments(player)
-        raise_margin += opp_raise_adj
-        call_margin += opp_call_adj
-        raise_margin += raise_variant
-        call_margin += call_variant
+        raise_mult = 1.0
+        call_mult = 1.0
+        for adj in (discard_bias, range_bias, opp_raise_adj, raise_variant, texture_raise):
+            raise_mult += adj
+        for adj in (discard_bias, range_bias, opp_call_adj, call_variant, texture_call):
+            call_mult += adj
         
         # Tighten play when approaching win-lock (pot-aware)
         lead_adj = core._lead_protection_adjustment(player, pot_total)
-        raise_margin += lead_adj
-        call_margin -= lead_adj  # Harder to call when protecting lead
+        raise_mult += lead_adj
+        call_mult -= lead_adj  # Harder to call when protecting lead
         traj_raise_adj, traj_call_adj = core._trajectory_lock_adjustment(player)
-        raise_margin += traj_raise_adj
-        call_margin += traj_call_adj
+        raise_mult += traj_raise_adj
+        call_mult += traj_call_adj
 
         if core._USE_RANDOM_POLICY:
             policy_bias = core._policy_bias(player, equity, pot_odds)
-            raise_margin -= policy_bias
-            call_margin -= policy_bias
-        raise_margin += texture_raise
-        call_margin += texture_call
+            raise_mult -= policy_bias
+            call_mult -= policy_bias
         if player.hero.continue_cost > 0 and pot_total > 0:
             ratio = player.hero.continue_cost / float(pot_total)
             if ratio >= 1.0:
-                call_margin += 0.10
+                call_mult += 0.10
             elif ratio >= 0.6:
-                call_margin += 0.07
+                call_mult += 0.07
             elif ratio >= 0.35:
-                call_margin += 0.04
+                call_mult += 0.04
             call_overbet_adj, raise_overbet_adj = core._opponent_overbet_adjustments(
                 player,
                 player.hero.continue_cost,
                 pot_total,
             )
-            call_margin += call_overbet_adj
-            raise_margin += raise_overbet_adj
+            call_mult += call_overbet_adj
+            raise_mult += raise_overbet_adj
         if core.is_flop(player.street):
-            call_margin += 0.04
-        call_margin -= core._fold_bias_by_street(player.street) * 2.0
+            call_mult += 0.04
+        call_mult -= core._fold_bias_by_street(player.street) * 2.0
         raise_call_penalty = core._raise_call_penalty(player, pot_total)
-        call_margin -= raise_call_penalty
         turn_raise_extra = core._turn_raise_extra(player, pot_total)
-        if turn_raise_extra > 0:
-            call_margin -= turn_raise_extra
         river_raise_call_penalty = core._river_raise_call_penalty(player, pot_total)
-        call_margin -= river_raise_call_penalty
         river_raise_extra = core._river_raise_extra(player, pot_total)
-        if river_raise_extra > 0:
-            call_margin -= river_raise_extra
+        line_key = getattr(player.hero, "line_prefix", None)
+        call_mult += core._line_call_penalty(line_key, player.street)
+        strength, confidence = core.opponent_range_hint(line_key)
+        call_mult += core._confidence_call_penalty(confidence, player.street)
         if equity >= core._AGGRO_EQUITY:
-            raise_margin -= core._AGGRO_RAISE_BONUS
+            raise_mult -= core._AGGRO_RAISE_BONUS
         if core._should_pressure(player, equity):
-            raise_margin -= core._PRESSURE_RAISE_BONUS
+            raise_mult -= core._PRESSURE_RAISE_BONUS
         # Lock defense: increase raise threshold when near danger zone
         lock_defense_margin = core._lock_defense_raise_margin(player)
-        raise_margin += lock_defense_margin
+        raise_mult += lock_defense_margin
+
+        raise_mult = max(0.4, min(1.6, raise_mult))
+        call_mult = max(0.4, min(1.6, call_mult))
+        raise_margin = base_raise_margin * raise_mult
+        call_margin = base_call_margin * call_mult
+
+        call_margin -= raise_call_penalty
+        if turn_raise_extra > 0:
+            call_margin -= turn_raise_extra
+        call_margin -= river_raise_call_penalty
+        if river_raise_extra > 0:
+            call_margin -= river_raise_extra
+
+        raise_threshold = pot_odds + raise_margin
+        call_threshold = pot_odds + call_margin
+        lumberjack.record_thresholds("TightPolicy", player.street, call_threshold, raise_threshold, pot_odds)
 
         if player.street <= 0 and not core._DISABLE_PREFLOP_MIX:
             min_raise, max_raise = getattr(player.hero, "raise_bounds", (0, 0))
@@ -239,6 +249,7 @@ class TightPolicy:
                     equity,
                     value_mult=value_mult,
                 )
+                target = core._suppress_medium_raise_target(target, min_raise, pot_total, equity)
                 if core.is_river(player.street) and equity < core._NUT_RAISE_EQUITY:
                     river_cap = int(pot_total * core._RIVER_MAX_RAISE_FRAC)
                     target = min(target, river_cap)
