@@ -505,6 +505,49 @@ def _sample_fold_rate(rng: random.Random, folds: float, total: float) -> float:
     return rng.betavariate(alpha, beta)
 
 
+def _bet_escalation_penalty(player, bet_size: int, pot_total: int) -> float:
+    if player is None or bet_size <= 0 or pot_total <= 0:
+        return 0.0
+    history = getattr(player, "_villain_bet_history", None)
+    if not history:
+        return 0.0
+    prev_street, prev_size, prev_pot = history[-1]
+    street = getattr(player, "street", 0)
+    if prev_street >= street:
+        return 0.0
+    if prev_size <= 0 or prev_pot <= 0:
+        return 0.0
+    ratio_now = bet_size / float(max(1, pot_total))
+    ratio_prev = prev_size / float(max(1, prev_pot))
+    escalation = max(0.0, ratio_now - ratio_prev)
+    if bet_size >= prev_size * 1.6:
+        escalation += 0.15
+    if bet_size >= prev_size * 2.0:
+        escalation += 0.1
+    penalty = 0.02 + 0.12 * escalation
+    if street >= 6:
+        penalty *= 1.2
+    elif street >= 5:
+        penalty *= 1.1
+    return min(0.12, max(0.0, penalty))
+
+
+def _bet_escalation_info(player, bet_size: int, pot_total: int) -> Tuple[float, float, float]:
+    if player is None or bet_size <= 0 or pot_total <= 0:
+        return 0.0, 0.0, 0.0
+    history = getattr(player, "_villain_bet_history", None)
+    if not history:
+        return 0.0, 0.0, 0.0
+    prev_street, prev_size, prev_pot = history[-1]
+    street = getattr(player, "street", 0)
+    if prev_street >= street or prev_size <= 0 or prev_pot <= 0:
+        return 0.0, 0.0, 0.0
+    size_ratio = bet_size / float(prev_size)
+    ratio_prev = prev_size / float(max(1, prev_pot))
+    ratio_now = bet_size / float(max(1, pot_total))
+    return size_ratio, ratio_prev, ratio_now
+
+
 def _opponent_call_rate(street: Optional[int]) -> float:
     if street is None:
         total = 0.0

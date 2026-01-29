@@ -139,6 +139,10 @@ class TightPolicy:
             )
             call_mult += call_overbet_adj
             raise_mult += raise_overbet_adj
+            escalation_penalty = core._bet_escalation_penalty(
+                player, player.hero.continue_cost, pot_total
+            )
+            call_mult -= escalation_penalty
         if core.is_flop(player.street):
             call_mult += 0.04
         fold_bias = core._fold_bias_by_street(player.street)
@@ -158,6 +162,10 @@ class TightPolicy:
             call_mult -= core._confidence_call_penalty(confidence, player.street)
             if core.is_river(player.street):
                 call_mult -= 0.06
+            last_call_street = getattr(player, "_last_hero_bet_street", None)
+            last_action = getattr(player, "_last_hero_bet_action", None)
+            if last_action == "call" and last_call_street is not None and last_call_street != player.street:
+                call_mult -= 0.06 if player.street == 5 else 0.08
         variance_factor = core._equity_variance_factor(player)
         if variance_factor > 0.0:
             raise_mult += 0.12 * variance_factor
@@ -228,6 +236,9 @@ class TightPolicy:
         if RaiseAction in legal_actions:
             min_raise, max_raise = getattr(player.hero, "raise_bounds", (0, 0))
             raise_threshold = pot_odds + raise_margin
+            hero_raises = getattr(player, "_hero_raise_count", {}).get(int(player.street), 0)
+            villain_raises = getattr(player, "_villain_raise_count", {}).get(int(player.street), 0)
+            raise_war = hero_raises >= 1 and villain_raises >= 1 and equity < 0.70
             if core.is_river(player.street):
                 equity = core._range_conditioned_equity(
                     player,
@@ -250,7 +261,12 @@ class TightPolicy:
                 fold_rate = core.fold_equity_estimate(None, min_raise, player.street, pot_total)
             if fold_conf > 0.0 and fold_width > 0.25:
                 fold_rate = min(fold_rate, fold_low)
+            if player.hero.continue_cost == 0 and pot_total <= 8 and min_raise >= pot_total * 8:
+                if fold_conf < 0.5 or fold_width > 0.2:
+                    raise_threshold += 0.08
             if min_raise > raise_cap or min_raise > player.hero.stack // 3:
+                pass
+            elif raise_war:
                 pass
             elif equity >= core._NUT_RAISE_EQUITY and min_raise > 0:
                 target = core._nut_raise_target(min_raise, max_raise)
@@ -316,6 +332,31 @@ class TightPolicy:
                 anti_rate = core._anti_exploit_rate(player)
                 if anti_rate > 0 and CallAction in legal_actions and random.random() < anti_rate:
                     return _record(CallAction(), equity, pot_odds)
+                return _record(FoldAction(), equity, pot_odds)
+
+        if player.hero.continue_cost > 0 and FoldAction in legal_actions:
+            last_call_street = getattr(player, "_last_hero_bet_street", None)
+            last_action = getattr(player, "_last_hero_bet_action", None)
+            if last_action == "call" and last_call_street is not None and last_call_street != player.street:
+                call_down_gate = 0.05 if player.street == 5 else 0.07
+                if equity < pot_odds + call_margin + call_down_gate:
+                    anti_rate = core._anti_exploit_rate(player)
+                    if anti_rate > 0 and CallAction in legal_actions and random.random() < anti_rate:
+                        return _record(CallAction(), equity, pot_odds)
+                    return _record(FoldAction(), equity, pot_odds)
+            size_ratio, ratio_prev, ratio_now = core._bet_escalation_info(
+                player, player.hero.continue_cost, pot_total
+            )
+            if size_ratio >= 2.0 or (ratio_now - ratio_prev) >= 0.4:
+                escalation_gate = 0.05 if player.street == 5 else 0.07
+                if equity < pot_odds + call_margin + escalation_gate:
+                    anti_rate = core._anti_exploit_rate(player)
+                    if anti_rate > 0 and CallAction in legal_actions and random.random() < anti_rate:
+                        return _record(CallAction(), equity, pot_odds)
+                    return _record(FoldAction(), equity, pot_odds)
+            hero_raises = getattr(player, "_hero_raise_count", {}).get(int(player.street), 0)
+            villain_raises = getattr(player, "_villain_raise_count", {}).get(int(player.street), 0)
+            if hero_raises >= 1 and villain_raises >= 1 and equity < 0.70:
                 return _record(FoldAction(), equity, pot_odds)
 
         hard_fold_equity = core._hard_fold_equity(player.street)

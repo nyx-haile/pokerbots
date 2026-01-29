@@ -60,6 +60,9 @@ class Player(Bot):
         self._last_hero_call_street = None
         self._last_hero_bet_street = None
         self._last_hero_bet_action = None
+        self._hero_raise_count = {}
+        self._villain_raise_count = {}
+        self._villain_bet_history = []
         self.hero.fold_prevented = False
         self.hero.fold_prevent_street = None
         self.hero.fold_prevent_action = None
@@ -143,6 +146,11 @@ class Player(Bot):
             strategy.record_overbet_observation(prev.street, delta, self._pot_total_from_state(prev))
             strategy.record_opponent_bet_size(prev.street, delta, self._pot_total_from_state(prev))
             self._record_villain_action(prev.street, "raise", delta, self._pot_total_from_state(prev))
+            street_key = int(prev.street)
+            self._villain_raise_count[street_key] = self._villain_raise_count.get(street_key, 0) + 1
+            self._villain_bet_history.append(
+                (street_key, int(delta), int(self._pot_total_from_state(prev)))
+            )
 
     def _hero_line_key(self) -> str:
         codes = []
@@ -191,6 +199,9 @@ class Player(Bot):
         self._river_value_bet = False
         self._last_hero_bet_street = None
         self._last_hero_bet_action = None
+        self._hero_raise_count = {}
+        self._villain_raise_count = {}
+        self._villain_bet_history = []
         self.hero.fold_prevented = False
         self.hero.fold_prevent_street = None
         self.hero.fold_prevent_action = None
@@ -494,6 +505,8 @@ class Player(Bot):
             self._last_aggressor = True
             self._last_hero_bet_street = self.street
             self._last_hero_bet_action = "raise"
+            street_key = int(self.street)
+            self._hero_raise_count[street_key] = self._hero_raise_count.get(street_key, 0) + 1
         return action
         #export computation to strategy engine
 

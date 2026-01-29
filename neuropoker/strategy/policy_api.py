@@ -69,6 +69,8 @@ from .models import (  # noqa: F401
     _anti_exploit_discard_index,
     _equity_variance_factor,
     fold_equity_band,
+    _bet_escalation_penalty,
+    _bet_escalation_info,
 )
 from .preflop import _preflop_open_decision  # noqa: F401
 
