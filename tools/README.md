@@ -45,6 +45,15 @@ python3 tools/parse_gamelog.py runs/<timestamp>/gamelog.txt --json-out summary.j
 The JSON summary includes per-player EV/hand, win rate, variance, action
 frequencies, and discard counts.
 
+## Summarize Scrims
+
+```bash
+python3 tools/summarize_scrims.py scrim_logs --pattern 'game_log*' --json-out scrim_summary.json
+```
+
+Prints per-log and aggregate summaries including net results, showdown vs
+non-showdown splits, end-street counts, and action frequencies by street.
+
 ## Evaluate Against Baselines
 
 ```bash
