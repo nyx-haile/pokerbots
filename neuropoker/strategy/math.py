@@ -584,10 +584,6 @@ def _call_margin_by_street(street: int) -> float:
 
 
 def _lead_protection_adjustment(player, pot_total: int = 0) -> float:
-    from .core import _ENABLE_LOCK_WIN
-
-    if not _ENABLE_LOCK_WIN:
-        return 0.0
     hero_bankroll = getattr(player.hero, "bankroll", 0)
     if hero_bankroll <= 0:
         return 0.0
@@ -613,10 +609,6 @@ def _lead_protection_adjustment(player, pot_total: int = 0) -> float:
 
 
 def _lead_protection_size_mult(player) -> float:
-    from .core import _ENABLE_LOCK_WIN
-
-    if not _ENABLE_LOCK_WIN:
-        return 1.0
     hero_bankroll = getattr(player.hero, "bankroll", 0)
     if hero_bankroll <= 0:
         return 1.0
@@ -834,6 +826,8 @@ _PASSIVE_LINES = {
 def _is_passive_line(line_key: Optional[str]) -> bool:
     if not line_key:
         return False
+    if "R" not in line_key:
+        return True
     return line_key in _PASSIVE_LINES
 
 

@@ -60,6 +60,9 @@ class Player(Bot):
         self._last_hero_call_street = None
         self._last_hero_bet_street = None
         self._last_hero_bet_action = None
+        self.hero.fold_prevented = False
+        self.hero.fold_prevent_street = None
+        self.hero.fold_prevent_action = None
         self._hero_bet_buckets = []
         self._hero_line_actions = {}
         self._river_value_bet = False
@@ -188,6 +191,9 @@ class Player(Bot):
         self._river_value_bet = False
         self._last_hero_bet_street = None
         self._last_hero_bet_action = None
+        self.hero.fold_prevented = False
+        self.hero.fold_prevent_street = None
+        self.hero.fold_prevent_action = None
         strategy.begin_round(self)
         self.hero.last_discard_ev = None
         self.hero.raise_plan_target = None
@@ -277,6 +283,15 @@ class Player(Bot):
         if getattr(self.hero, "last_discard_ev", None):
             lumberjack.record_discard_outcome(self.hero.last_discard_ev, int(self.hero.delta))
             self.hero.last_discard_ev = None
+        if getattr(self.hero, "fold_prevented", False) and getattr(self.hero, "fold_prevent_action", None):
+            fold_street = getattr(self.hero, "fold_prevent_street", None)
+            if fold_street is None:
+                fold_street = log_street
+            lumberjack.record_fold_prevent_outcome(
+                int(fold_street),
+                self.hero.fold_prevent_action,
+                int(self.hero.delta),
+            )
         end_bucket = self._leak_stats["end_by_street"].setdefault(
             log_street, {"hands": 0, "delta": 0, "loss": 0}
         )
@@ -330,6 +345,7 @@ class Player(Bot):
             lumberjack.log(lumberjack.equity_error_summary())
             lumberjack.log(lumberjack.threshold_summary())
             lumberjack.log(lumberjack.discard_ev_summary())
+            lumberjack.log(lumberjack.fold_prevent_summary())
             lumberjack.log(lumberjack.showdown_line_summary())
             lumberjack.log(lumberjack.bet_size_ev_summary())
             lumberjack.log(lumberjack.river_value_bet_summary())

@@ -12,6 +12,7 @@ _BET_SIZE_EV: Dict[int, Dict[str, Dict[str, float]]] = {}
 _RIVER_VALUE_BET: Dict[str, float] = {"count": 0.0, "wins": 0.0, "sum_delta": 0.0}
 _THRESHOLD_STATS: Dict[str, Dict[int, Dict[str, float]]] = {}
 _EQUITY_ERROR_STATS: Dict[int, Dict[str, float]] = {}
+_FOLD_PREVENT_STATS: Dict[int, Dict[str, float]] = {}
 
 
 def policy_summary(stats: Dict[str, Dict]) -> str:
@@ -169,6 +170,23 @@ def record_equity_error(street: int, abs_error: float, samples: int, extended: b
         bucket["extended"] += 1.0
 
 
+def record_fold_prevent_outcome(street: int, action_to: str, delta: int) -> None:
+    bucket = _FOLD_PREVENT_STATS.setdefault(
+        int(street),
+        {"count": 0.0, "sum_delta": 0.0, "wins": 0.0, "losses": 0.0, "calls": 0.0, "checks": 0.0},
+    )
+    bucket["count"] += 1.0
+    bucket["sum_delta"] += float(delta)
+    if delta > 0:
+        bucket["wins"] += 1.0
+    elif delta < 0:
+        bucket["losses"] += 1.0
+    if action_to == "CallAction":
+        bucket["calls"] += 1.0
+    elif action_to == "CheckAction":
+        bucket["checks"] += 1.0
+
+
 def record_hero_action(street: int, action: str) -> None:
     street_bucket = _HERO_ACTIONS.setdefault(int(street), {})
     street_bucket[action] = street_bucket.get(action, 0) + 1
@@ -242,6 +260,27 @@ def equity_error_summary() -> str:
         lines.append(
             f"  street={street} count={int(count)} avg_abs_err={avg_error:.3f} "
             f"avg_samples={avg_samples:.1f} extended={extended}"
+        )
+    return "\n".join(lines)
+
+
+def fold_prevent_summary() -> str:
+    if not _FOLD_PREVENT_STATS:
+        return "fold_prevent: none"
+    lines = ["fold_prevent:"]
+    for street in sorted(_FOLD_PREVENT_STATS):
+        bucket = _FOLD_PREVENT_STATS[street]
+        count = bucket.get("count", 0.0)
+        if count <= 0:
+            continue
+        avg_delta = bucket.get("sum_delta", 0.0) / count
+        wins = bucket.get("wins", 0.0)
+        losses = bucket.get("losses", 0.0)
+        calls = bucket.get("calls", 0.0)
+        checks = bucket.get("checks", 0.0)
+        lines.append(
+            f"  street={street} count={int(count)} avg_delta={avg_delta:.2f} "
+            f"wins={int(wins)} losses={int(losses)} calls={int(calls)} checks={int(checks)}"
         )
     return "\n".join(lines)
 

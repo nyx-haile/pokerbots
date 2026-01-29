@@ -67,6 +67,8 @@ from .models import (  # noqa: F401
     _value_extraction_multiplier,
     _anti_exploit_rate,
     _anti_exploit_discard_index,
+    _equity_variance_factor,
+    fold_equity_band,
 )
 from .preflop import _preflop_open_decision  # noqa: F401
 

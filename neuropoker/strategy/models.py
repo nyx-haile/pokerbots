@@ -91,6 +91,8 @@ _OPPONENT_RANGE_MODEL = {
     "inferred": {"sum": 0.0, "total": 0.0},
 }
 
+_CONFIDENCE_Z = 1.0
+
 _OPP_PASSIVE_THRESHOLD = _load_float_list(
     "NEUROPOKER_OPP_PASSIVE_THRESHOLD",
     1,
@@ -394,20 +396,24 @@ def _opponent_range_bias(street: int) -> float:
 
 
 def _opponent_is_passive(street: int) -> bool:
-    fold_rate = _opponent_fold_rate(street, None)
+    fold_rate, low, _, conf, width = _opponent_fold_rate_band(street, None)
     if fold_rate <= 0.0:
         return False
-    return fold_rate >= _OPP_PASSIVE_THRESHOLD
+    if conf < 0.25 or width > 0.35:
+        return False
+    return low >= _OPP_PASSIVE_THRESHOLD
 
 
 def _opponent_is_calling_station(street: int) -> bool:
-    fold_rate = _opponent_fold_rate(street, None)
+    fold_rate, _, high, conf, width = _opponent_fold_rate_band(street, None)
     call_rate = _opponent_call_rate(street)
     if fold_rate <= 0.0:
         return False
     if call_rate <= 0.0:
         return False
-    return fold_rate <= _OPP_STATION_FOLD_RATE and call_rate >= _OPP_STATION_CALL_RATE
+    if conf < 0.25 or width > 0.35:
+        return False
+    return high <= _OPP_STATION_FOLD_RATE and call_rate >= _OPP_STATION_CALL_RATE
 
 
 def _value_extraction_multiplier(player) -> float:
@@ -418,6 +424,9 @@ def _value_extraction_multiplier(player) -> float:
     elif _opponent_is_passive(street):
         opp_mult = _OPP_PASSIVE_VALUE_MULT
     lead_mult = _lead_protection_size_mult(player)
+    variance = _equity_variance_factor(player)
+    if variance > 0.0:
+        opp_mult *= max(0.85, 1.0 - 0.2 * variance)
     return opp_mult * lead_mult
 
 
@@ -438,6 +447,62 @@ def _opponent_fold_rate(street: int, bucket_key: Optional[str]) -> float:
     if total < _FOLD_EQUITY_MIN_OBS:
         return 0.0
     return (folds + _FOLD_PRIOR_ALPHA) / (total + _FOLD_PRIOR_ALPHA + _FOLD_PRIOR_BETA)
+
+
+def _opponent_fold_rate_counts(street: int, bucket_key: Optional[str]) -> Tuple[float, float]:
+    bucket = _OPPONENT_BET_MODEL["by_street"].get(street)
+    if not bucket:
+        return 0.0, 0.0
+    if bucket_key is None:
+        total = 0.0
+        folds = 0.0
+        for counts in bucket.values():
+            total += counts.get("fold", 0.0) + counts.get("call", 0.0)
+            folds += counts.get("fold", 0.0)
+    else:
+        counts = bucket.get(bucket_key, {})
+        total = counts.get("fold", 0.0) + counts.get("call", 0.0)
+        folds = counts.get("fold", 0.0)
+    return folds, total
+
+
+def _beta_confidence_band(successes: float, total: float, alpha: float, beta: float) -> Tuple[float, float, float, float]:
+    if total <= 0:
+        return 0.0, 0.0, 0.0, 0.0
+    mean = (successes + alpha) / (total + alpha + beta)
+    var = mean * (1.0 - mean) / (total + alpha + beta + 1.0)
+    stdev = math.sqrt(max(0.0, var))
+    low = max(0.0, mean - _CONFIDENCE_Z * stdev)
+    high = min(1.0, mean + _CONFIDENCE_Z * stdev)
+    conf = min(1.0, total / 12.0)
+    return mean, low, high, conf
+
+
+def _opponent_fold_rate_band(street: int, bucket_key: Optional[str]) -> Tuple[float, float, float, float, float]:
+    folds, total = _opponent_fold_rate_counts(street, bucket_key)
+    if total < _FOLD_EQUITY_MIN_OBS:
+        return 0.0, 0.0, 0.0, 0.0, 1.0
+    mean, low, high, conf = _beta_confidence_band(folds, total, _FOLD_PRIOR_ALPHA, _FOLD_PRIOR_BETA)
+    width = max(0.0, high - low)
+    return mean, low, high, conf, width
+
+
+def fold_equity_band(bet_size: int, street: int, pot_total: int) -> Tuple[float, float, float, float, float]:
+    if pot_total < _FOLD_EQUITY_MIN_POT:
+        return 0.0, 0.0, 0.0, 0.0, 1.0
+    bucket_key = _bet_size_bucket(bet_size, pot_total)
+    mean, low, high, conf, width = _opponent_fold_rate_band(street, bucket_key)
+    if mean > 0.0:
+        return mean, low, high, conf, width
+    return _opponent_fold_rate_band(street, None)
+
+
+def _sample_fold_rate(rng: random.Random, folds: float, total: float) -> float:
+    if total <= 0.0:
+        return 0.0
+    alpha = folds + _FOLD_PRIOR_ALPHA
+    beta = (total - folds) + _FOLD_PRIOR_BETA
+    return rng.betavariate(alpha, beta)
 
 
 def _opponent_call_rate(street: Optional[int]) -> float:
@@ -790,6 +855,11 @@ def _opponent_overbet_adjustments(player, bet_size: int, pot_total: int) -> Tupl
         raise_adj -= 0.02 * confidence
     call_adj = max(-0.03, min(0.06, call_adj))
     raise_adj = max(-0.04, min(0.08, raise_adj))
+    variance = _equity_variance_factor(player)
+    if variance > 0.0:
+        damp = max(0.5, 1.0 - 0.5 * variance)
+        call_adj *= damp
+        raise_adj *= damp
     return call_adj, raise_adj
 
 
@@ -927,6 +997,32 @@ def _line_prior_adjustment(line_key: Optional[str]) -> float:
     return max(-0.04, min(0.04, bias))
 
 
+def line_range_calibration(line_key: Optional[str]) -> Tuple[float, float, float, float]:
+    if not line_key:
+        return 0.0, 0.0, 1.0, 0.0
+    bucket = _LINE_OUTCOMES.get(line_key)
+    if not bucket:
+        return 0.0, 0.0, 1.0, 0.0
+    count = bucket.get("count", 0.0)
+    if count < max(6.0, _LINE_PRIOR_MIN_OBS):
+        return 0.0, 0.0, 1.0, 0.0
+    wins = bucket.get("wins", 0.0)
+    losses = bucket.get("losses", 0.0)
+    total = max(1.0, wins + losses)
+    win_rate = wins / total
+    avg_delta = bucket.get("sum_delta", 0.0) / max(1.0, count)
+    strength_adj = (0.5 - win_rate) * 0.08
+    if avg_delta < 0:
+        strength_adj += min(0.04, -avg_delta / 2000.0)
+    elif avg_delta > 0:
+        strength_adj -= min(0.03, avg_delta / 2500.0)
+    strength_adj = max(-0.06, min(0.06, strength_adj))
+    tight_adj = strength_adj * 0.6
+    mix_mult = 1.0 - min(0.2, abs(strength_adj) * 2.5)
+    conf = min(1.0, count / 20.0)
+    return strength_adj, tight_adj, mix_mult, conf
+
+
 def opponent_discard_range_adjustment() -> Tuple[float, float, float]:
     total = _OPPONENT_DISCARD_MODEL["total"]
     if total < 3:
@@ -958,7 +1054,21 @@ def _opponent_threshold_adjustments(player) -> Tuple[float, float, float, float]
         strong = max(0.0, strength - 0.55)
         river_raise_adj = 0.03 + 0.03 * confidence + 0.03 * strong
         river_floor_adj = 0.02 + 0.03 * confidence + 0.05 * strong
+    variance = _equity_variance_factor(player)
+    if variance > 0.0:
+        damp = max(0.4, 1.0 - 0.6 * variance)
+        raise_adj *= damp
+        call_adj *= damp
+        river_raise_adj *= damp
+        river_floor_adj *= damp
     return raise_adj, call_adj, river_raise_adj, river_floor_adj
+
+
+def _equity_variance_factor(player, cap: float = 0.12) -> float:
+    err = getattr(getattr(player, "hero", None), "last_equity_abs_error", 0.0)
+    if err <= 0.0 or cap <= 0.0:
+        return 0.0
+    return max(0.0, min(1.0, err / cap))
 
 
 def update_range_after_discard(range3, discarded_card):
@@ -1013,16 +1123,37 @@ def _adaptive_raise_size(
         return 0
     pot = max(1, pot_total)
     street = getattr(player, "street", 0)
-    fold_rate = fold_equity_estimate(None, min_raise, street, pot_total)
+    seed = hash(
+        (
+            getattr(player, "round_num", 0),
+            street,
+            tuple(getattr(getattr(player, "hero", None), "hand", ())),
+            tuple(getattr(player, "community", ())),
+            int(equity * 100),
+        )
+    ) & 0xFFFFFFFF
+    rng = random.Random(seed)
+    fold_rate, fold_low, fold_high, fold_conf, fold_width = fold_equity_band(min_raise, street, pot_total)
     if fold_rate <= 0.0:
         fold_rate = _opponent_fold_rate(street, None)
+        fold_low = fold_rate
+        fold_high = fold_rate
+        fold_conf = 0.0
+        fold_width = 1.0
     base_ratio = 0.28
+    conf_weight = max(0.0, min(1.0, 1.0 - fold_width / 0.45))
     if bluff:
-        base_ratio += 0.15 * max(0.0, fold_rate - 0.25)
-        base_ratio -= 0.08 * max(0.0, 0.25 - fold_rate)
+        effective_rate = fold_rate
+        if fold_conf > 0.0:
+            folds, total = _opponent_fold_rate_counts(street, _bet_size_bucket(min_raise, pot_total))
+            effective_rate = _sample_fold_rate(rng, folds, total)
+        base_ratio += 0.15 * max(0.0, effective_rate - 0.25) * conf_weight
+        base_ratio -= 0.08 * max(0.0, 0.25 - effective_rate) * conf_weight
     else:
         base_ratio += 0.55 * max(0.0, min(1.0, equity))
         base_ratio *= max(0.7, min(1.4, value_mult))
+        if fold_conf > 0.0 and fold_width > 0.2:
+            base_ratio *= max(0.85, 1.0 - 0.3 * (fold_width - 0.2))
     overbet_rate, big_rate, conf = opponent_overbet_rate(street)
     if conf > 0.0:
         if overbet_rate < 0.2:
@@ -1037,16 +1168,6 @@ def _adaptive_raise_size(
             base_ratio = max(base_ratio, 0.55)
     base_ratio = max(0.18, min(1.25, base_ratio))
 
-    seed = hash(
-        (
-            getattr(player, "round_num", 0),
-            street,
-            tuple(getattr(getattr(player, "hero", None), "hand", ())),
-            tuple(getattr(player, "community", ())),
-            int(equity * 100),
-        )
-    ) & 0xFFFFFFFF
-    rng = random.Random(seed)
     jitter = rng.uniform(0.88, 1.12)
     target = int(pot * base_ratio * jitter)
     target = max(min_raise, min(max_raise, target))
@@ -1179,12 +1300,15 @@ def _update_random_policy(player) -> None:
 
 
 def _should_pressure(player, equity: float) -> bool:
-    if equity < _PRESSURE_EQUITY_THRESHOLD:
+    variance = _equity_variance_factor(player)
+    if equity < _PRESSURE_EQUITY_THRESHOLD + 0.02 * variance:
         return False
-    fold_rate = _opponent_fold_rate(player.street, None)
+    fold_rate, low, _, conf, width = _opponent_fold_rate_band(player.street, None)
     if fold_rate <= 0.0:
         return True
-    return fold_rate >= _PRESSURE_FOLDRATE_MIN
+    if conf < 0.25 or width > 0.35:
+        return False
+    return low >= _PRESSURE_FOLDRATE_MIN
 
 
 def _select_discard_asymmetric(

@@ -19,6 +19,7 @@ from .math import (
     _remaining_fold_loss,
     pot_odds_to_call,
     is_river,
+    _board_texture_adjustments,
 )
 from .models import (
     _policy_classes,
@@ -27,6 +28,7 @@ from .models import (
     _select_discard_asymmetric,
     opponent_range_hint,
     opponent_discard_range_adjustment,
+    line_range_calibration,
     _anti_exploit_rate,
     _anti_exploit_discard_index,
 )
@@ -109,6 +111,8 @@ def _range_conditioned_equity(
     strength += discard_strength_adj
     if discard_conf > 0:
         confidence = max(confidence, 0.4 * discard_conf)
+    texture_strength, texture_tight, texture_mix = _board_texture_adjustments(board_cards)
+    line_strength_adj, line_tight_adj, line_mix_mult, line_conf = line_range_calibration(line_key)
     strong = max(0.0, strength - 0.5)
     river_tighten = 0.0
     if is_river(getattr(player, "street", 0)):
@@ -119,8 +123,18 @@ def _range_conditioned_equity(
     if confidence < 0.25:
         strength = min(0.98, strength + 0.02)
         tightness = min(0.95, tightness + 0.04)
+    if texture_strength or texture_tight:
+        strength = min(0.99, strength + texture_strength)
+        tightness = min(0.95, tightness + texture_tight)
     mix_uniform = 0.45 - 0.3 * confidence - 0.15 * strong - (0.08 if river_tighten > 0 else 0.0)
     mix_uniform = max(0.15, mix_uniform)
+    if texture_mix < 1.0:
+        mix_uniform *= texture_mix
+    if line_conf > 0.0:
+        strength = max(0.2, min(0.99, strength + line_strength_adj * line_conf))
+        tightness = max(0.2, min(0.97, tightness + line_tight_adj * line_conf))
+        mix_uniform *= 1.0 - (1.0 - line_mix_mult) * line_conf
+    mix_uniform = max(0.1, min(0.7, mix_uniform))
     opponent_range = stats.build_opponent_range(
         hero_hand + board_cards,
         target_strength=strength,
@@ -161,6 +175,10 @@ def _range_conditioned_equity(
         samples_used = boosted_samples
     else:
         samples_used = samples
+    if hasattr(player, "hero"):
+        player.hero.last_equity_abs_error = abs_error
+        player.hero.last_equity_samples = samples_used
+        player.hero.last_equity_extended = extended
     lumberjack.record_equity_error(street, abs_error, samples_used, extended)
     return equity
 
@@ -198,7 +216,7 @@ def _opponent_future_fold_loss(player: PlayerView, rounds_left: int) -> int:
     return _remaining_fold_loss(player) - (BIG_BLIND if starts_as_bb else SMALL_BLIND)
 
 
-def _opponent_can_lock_after_fold(player: PlayerView) -> bool:
+def _opponent_can_lock_after_loss(player: PlayerView, extra_loss: int) -> bool:
     round_num = getattr(player, "round_num", 0)
     if round_num <= 0:
         return False
@@ -208,9 +226,14 @@ def _opponent_can_lock_after_fold(player: PlayerView) -> bool:
     loss_now = int(max(0, getattr(player.hero, "contribution", 0)))
     if loss_now <= 0:
         loss_now = BIG_BLIND if getattr(player.hero, "blind", False) else SMALL_BLIND
+    loss_now += max(0, int(extra_loss))
     hero_bankroll = getattr(player.hero, "bankroll", 0)
     opponent_bankroll = -hero_bankroll + loss_now
     return opponent_bankroll > _opponent_future_fold_loss(player, rounds_left)
+
+
+def _opponent_can_lock_after_fold(player: PlayerView) -> bool:
+    return _opponent_can_lock_after_loss(player, 0)
 
 
 def _avoid_lock_win_fold(player: PlayerView, action):
@@ -218,21 +241,29 @@ def _avoid_lock_win_fold(player: PlayerView, action):
         return action
     if not isinstance(action, FoldAction):
         return action
-    if not _opponent_can_lock_after_fold(player):
+    extra_loss = getattr(getattr(player, "hero", None), "continue_cost", 0)
+    if not _opponent_can_lock_after_loss(player, extra_loss):
         return action
     legal_actions = set(player.hero.legal_actions)
     if CheckAction in legal_actions and player.hero.continue_cost == 0:
+        player.hero.fold_prevented = True
+        player.hero.fold_prevent_street = getattr(player, "street", None)
+        player.hero.fold_prevent_action = "CheckAction"
         return CheckAction()
     if CallAction in legal_actions:
+        player.hero.fold_prevented = True
+        player.hero.fold_prevent_street = getattr(player, "street", None)
+        player.hero.fold_prevent_action = "CallAction"
         return CallAction()
     if CheckAction in legal_actions:
+        player.hero.fold_prevented = True
+        player.hero.fold_prevent_street = getattr(player, "street", None)
+        player.hero.fold_prevent_action = "CheckAction"
         return CheckAction()
     return action
 
 
 def _lock_defense_raise_margin(player: PlayerView) -> float:
-    if not _ENABLE_LOCK_WIN:
-        return 0.0
     max_safe = _max_safe_loss_this_round(player)
     if max_safe >= STARTING_STACK:
         return 0.0
@@ -243,8 +274,6 @@ def _lock_defense_raise_margin(player: PlayerView) -> float:
 
 
 def _cap_raise_for_lock_defense(player: PlayerView, raise_amount: int) -> int:
-    if not _ENABLE_LOCK_WIN:
-        return raise_amount
     max_safe = _max_safe_loss_this_round(player)
     if raise_amount <= max_safe:
         return raise_amount
@@ -255,32 +284,18 @@ def _cap_raise_for_lock_defense(player: PlayerView, raise_amount: int) -> int:
 
 
 def _is_desperate(player: PlayerView) -> bool:
-    round_num = getattr(player, "round_num", 0)
-    hero_bankroll = getattr(player.hero, "bankroll", 0)
-    if hero_bankroll >= 0:
-        return False
-    rounds_left = max(0, NUM_ROUNDS - round_num)
-    opp_starts_bb = not getattr(player.hero, "blind", False)
-    opp_future_loss = _remaining_fold_loss(player) - (BIG_BLIND if opp_starts_bb else SMALL_BLIND)
-    opponent_bankroll = -hero_bankroll + player.hero.pot_total
-    return opponent_bankroll > opp_future_loss
+    extra_loss = getattr(getattr(player, "hero", None), "continue_cost", 0)
+    return _opponent_can_lock_after_loss(player, extra_loss)
 
 
 def _is_near_desperate(player: PlayerView) -> bool:
-    if not _ENABLE_LOCK_WIN:
-        return False
     round_num = getattr(player, "round_num", 0)
     if round_num <= 0:
         return False
     hero_bankroll = getattr(player.hero, "bankroll", 0)
     if hero_bankroll >= -5:
         return False
-    rounds_left = max(0, NUM_ROUNDS - round_num)
-    opp_starts_bb = not getattr(player.hero, "blind", False)
-    opp_future_loss = _remaining_fold_loss(player) - (BIG_BLIND if opp_starts_bb else SMALL_BLIND)
-    opponent_bankroll = -hero_bankroll
-    lock_threshold = opp_future_loss
-    return opponent_bankroll > lock_threshold - 10
+    return _opponent_can_lock_after_loss(player, max(0, int(getattr(player.hero, "continue_cost", 0)) - 4))
 
 
 def play(bot):

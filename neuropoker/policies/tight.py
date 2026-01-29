@@ -158,6 +158,10 @@ class TightPolicy:
             call_mult -= core._confidence_call_penalty(confidence, player.street)
             if core.is_river(player.street):
                 call_mult -= 0.06
+        variance_factor = core._equity_variance_factor(player)
+        if variance_factor > 0.0:
+            raise_mult += 0.12 * variance_factor
+            call_mult += 0.08 * variance_factor
         if equity >= core._AGGRO_EQUITY:
             raise_mult -= core._AGGRO_RAISE_BONUS
         if core._should_pressure(player, equity):
@@ -238,7 +242,14 @@ class TightPolicy:
                     thin_guard = 0.02 + 0.02 * confidence + 0.03 * max(0.0, strength - 0.55)
                     raise_threshold += thin_guard
             raise_cap = max(4, int(pot_total // 2 * raise_cap_mult))
-            fold_rate = core.fold_equity_estimate(None, min_raise, player.street, pot_total)
+            fold_mean, fold_low, fold_high, fold_conf, fold_width = core.fold_equity_band(
+                min_raise, player.street, pot_total
+            )
+            fold_rate = fold_mean
+            if fold_rate <= 0.0:
+                fold_rate = core.fold_equity_estimate(None, min_raise, player.street, pot_total)
+            if fold_conf > 0.0 and fold_width > 0.25:
+                fold_rate = min(fold_rate, fold_low)
             if min_raise > raise_cap or min_raise > player.hero.stack // 3:
                 pass
             elif equity >= core._NUT_RAISE_EQUITY and min_raise > 0:
@@ -276,7 +287,10 @@ class TightPolicy:
                 and equity < pot_odds - 0.1
                 and core._should_bluff(player.street, board_cards, player.street == 0)
             ):
-                if fold_rate <= 0.3:
+                fold_mean, fold_low, fold_high, fold_conf, fold_width = core.fold_equity_band(
+                    min_raise, player.street, pot_total
+                )
+                if fold_mean <= 0.3 or fold_conf < 0.25 or fold_width > 0.35 or fold_low < 0.22:
                     pass
                 else:
                     target = core._adaptive_raise_size(
