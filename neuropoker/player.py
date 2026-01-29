@@ -466,6 +466,7 @@ class Player(Bot):
 
         self._record_opponent_action_from_state(round_state, hero_index, villain_index)
         self.hero.line_prefix = self._hero_line_key()
+        self.hero._equity_cache = {}
 
         # Only use DiscardAction if it's in legal_actions (which already checks street)
         # legal_actions() returns DiscardAction only when street is 2 or 3

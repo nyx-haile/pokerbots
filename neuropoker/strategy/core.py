@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 import copy
 import os
+import random
 from typing import Iterable, Sequence, Tuple
 
 from skeleton.actions import CallAction, CheckAction, DiscardAction, FoldAction, RaiseAction
@@ -143,7 +144,11 @@ def _mixed_policy_action(player: PlayerView):
     from policies.comeback import ComebackPolicy
 
     with lumberjack.suppress_logs():
-        equity = _estimate_policy_equity(player)
+        state = random.getstate()
+        try:
+            equity = _estimate_policy_equity(player)
+        finally:
+            random.setstate(state)
     pot_total = max(1, getattr(player.hero, "pot_total", 1))
     continue_cost = getattr(player.hero, "continue_cost", 0)
     pot_odds = pot_odds_to_call(continue_cost, pot_total)
@@ -167,7 +172,11 @@ def _mixed_policy_action(player: PlayerView):
             continue
         shadow = _shadow_player(player)
         with lumberjack.suppress_logs():
-            action = policy_class.play(shadow)
+            state = random.getstate()
+            try:
+                action = policy_class.play(shadow)
+            finally:
+                random.setstate(state)
         candidate_actions.append((policy_class, action, confidence))
 
     if not candidate_actions:
@@ -236,14 +245,36 @@ def _range_conditioned_equity(
     samples: int,
     max_seconds: float,
 ) -> float:
+    street = getattr(player, "street", 0)
+    cache = getattr(getattr(player, "hero", None), "_equity_cache", None)
+    cache_key = None
+    if cache is not None:
+        cache_key = (street, tuple(hero_hand), tuple(board_cards))
+        cached = cache.get(cache_key)
+        if cached:
+            if cached.get("samples", 0) >= samples and cached.get("max_seconds", 0.0) >= max_seconds:
+                if hasattr(player, "hero"):
+                    player.hero.last_equity_abs_error = cached.get("abs_error", 0.0)
+                    player.hero.last_equity_samples = cached.get("samples_used", cached.get("samples", 0))
+                    player.hero.last_equity_extended = cached.get("extended", False)
+                return cached.get("equity", 0.0)
     if len(hero_hand) != 2:
-        return stats.estimate_equity(
+        equity = stats.estimate_equity(
             hero_hand,
             board_cards,
             samples=samples,
             max_seconds=max_seconds,
         )
-    street = getattr(player, "street", 0)
+        if cache is not None and cache_key is not None:
+            cache[cache_key] = {
+                "equity": equity,
+                "samples": samples,
+                "max_seconds": max_seconds,
+                "samples_used": samples,
+                "abs_error": 0.0,
+                "extended": False,
+            }
+        return equity
     line_key = getattr(getattr(player, "hero", None), "line_prefix", None)
     strength, confidence = opponent_range_hint(line_key)
     discard_strength_adj, discard_tightness_adj, discard_conf = opponent_discard_range_adjustment()
@@ -299,6 +330,7 @@ def _range_conditioned_equity(
     abs_error = abs(equity - quick_equity)
     extended = False
     game_clock = getattr(player, "game_clock", None)
+    seconds_used = max_seconds
     if abs_error > 0.05 and (game_clock is None or game_clock > 18):
         boosted_samples = int(samples * 1.6)
         boosted_seconds = max_seconds * 1.6
@@ -312,6 +344,7 @@ def _range_conditioned_equity(
         abs_error = abs(equity - quick_equity)
         extended = True
         samples_used = boosted_samples
+        seconds_used = boosted_seconds
     else:
         samples_used = samples
     if hasattr(player, "hero"):
@@ -319,6 +352,15 @@ def _range_conditioned_equity(
         player.hero.last_equity_samples = samples_used
         player.hero.last_equity_extended = extended
     lumberjack.record_equity_error(street, abs_error, samples_used, extended)
+    if cache is not None and cache_key is not None:
+        cache[cache_key] = {
+            "equity": equity,
+            "samples": samples_used,
+            "max_seconds": seconds_used,
+            "samples_used": samples_used,
+            "abs_error": abs_error,
+            "extended": extended,
+        }
     return equity
 
 
@@ -490,7 +532,6 @@ def play(bot):
         if primary_policy is not None:
             bot.hero.policy_class = primary_policy
             bot.hero.policy_round = None
-            bot.hero.discard_bluff = primary_policy.__name__ == "BluffPolicy"
             shadow = _shadow_player(bot)
             with lumberjack.suppress_policy_actions():
                 primary_policy.play(shadow)
@@ -508,6 +549,11 @@ def play(bot):
                 )
         if _discard_action_required(bot):
             action = _force_discard_if_needed(bot, action)
+        bot.hero.discard_bluff = (
+            primary_policy is not None
+            and primary_policy.__name__ == "BluffPolicy"
+            and isinstance(action, DiscardAction)
+        )
         if primary_policy is not None:
             lumberjack.record_policy_action(
                 getattr(primary_policy, "__name__", "UnknownPolicy"),
