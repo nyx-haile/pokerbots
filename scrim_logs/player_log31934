@@ -1,0 +1,157 @@
+[pkrbot] pkrbot already available
+[bot] init python=3.7.17
+[bot] cwd=/tmp/tmpijwa_bu1/bd368fbf5f4298453459/source/neuropoker
+[bot] executable=/usr/local/bin/python3.7
+[bot] sys.path[0:3]=['/tmp/tmpijwa_bu1/bd368fbf5f4298453459/source/neuropoker', '/usr/local/lib/python37.zip', '/usr/local/lib/python3.7']
+[bot] env.PYTHONPATH=None
+[bot] env.NEUROPOKER_EVAL_BACKEND=None
+[bot] stats=ok
+[bot] first_action street=0 legal={<class 'skeleton.actions.RaiseAction'>, <class 'skeleton.actions.FoldAction'>, <class 'skeleton.actions.CallAction'>}
+[bot] policy_stats:
+ComebackPolicy: hands=86 avg_delta=-1.48 avg_reward=-0.015 ema_reward=-0.013
+  street=0 hands=56 avg_delta=-0.36 avg_reward=-0.004
+  street=4 hands=5 avg_delta=-4.20 avg_reward=-0.042
+  street=5 hands=7 avg_delta=-5.14 avg_reward=-0.051
+  street=6 hands=18 avg_delta=-2.78 avg_reward=-0.028
+LockWinPolicy: hands=656 avg_delta=-0.98 avg_reward=-0.010 ema_reward=-0.008
+  street=0 hands=359 avg_delta=-1.09 avg_reward=-0.011
+  street=4 hands=46 avg_delta=-2.00 avg_reward=-0.020
+  street=5 hands=44 avg_delta=-2.00 avg_reward=-0.020
+  street=6 hands=207 avg_delta=-0.36 avg_reward=-0.004
+TightPolicy: hands=258 avg_delta=4.44 avg_reward=0.009 ema_reward=0.158
+  street=0 hands=93 avg_delta=-1.08 avg_reward=-0.011
+  street=4 hands=39 avg_delta=12.18 avg_reward=0.045
+  street=5 hands=46 avg_delta=9.61 avg_reward=0.031
+  street=6 hands=80 avg_delta=4.10 avg_reward=0.003
+[bot] leak_stats:
+  end_street=0 hands=508 delta=-510 losses=478
+  end_street=4 hands=90 delta=362 losses=54
+  end_street=5 hands=97 delta=318 losses=63
+  end_street=6 hands=305 delta=204 losses=161
+  hero_calls street=4 calls=6 wins=1 losses=2
+  hero_calls street=5 calls=16 wins=2 losses=4
+  hero_folds_vs_bet street=0 small=399 medium=56 large=0
+  hero_folds_vs_bet street=4 small=49 medium=0 large=0
+  hero_folds_vs_bet street=5 small=54 medium=0 large=0
+  hero_folds_vs_bet street=6 small=81 medium=1 large=0
+  villain_bets street=0 small=0 medium=20 large=66
+  villain_bets street=4 small=52 medium=23 large=1
+  villain_bets street=5 small=64 medium=24 large=2
+  villain_bets street=6 small=68 medium=40 large=2
+  villain_checks street=0 checks=3
+  villain_checks street=4 checks=436
+  villain_checks street=5 checks=359
+  villain_checks street=6 checks=39
+  hero_fold_to_raise street=0 count=5
+  hero_fold_to_raise street=4 count=1
+  river_loss_after_bet count=18 delta=-127
+[bot] policy_actions:
+  ComebackPolicy street=0 CallAction=38 CheckAction=4 FoldAction=41 RaiseAction=33
+  ComebackPolicy street=4 CallAction=2 FoldAction=2 RaiseAction=1
+  ComebackPolicy street=5 CallAction=6 CheckAction=1 FoldAction=4 RaiseAction=1
+  ComebackPolicy street=6 CallAction=6 CheckAction=16 FoldAction=10
+  LockWinPolicy street=0 CheckAction=297 FoldAction=359
+  LockWinPolicy street=2 DiscardAction=297
+  LockWinPolicy street=3 CheckAction=297
+  LockWinPolicy street=4 CheckAction=297 FoldAction=46
+  LockWinPolicy street=5 CheckAction=251 FoldAction=44
+  LockWinPolicy street=6 CheckAction=207 FoldAction=61
+  TightPolicy street=0 CallAction=55 CheckAction=143 FoldAction=55 RaiseAction=13
+  TightPolicy street=2 CheckAction=77 DiscardAction=157
+  TightPolicy street=3 CheckAction=157 DiscardAction=77
+  TightPolicy street=4 CallAction=24 CheckAction=170 FoldAction=1 RaiseAction=55
+  TightPolicy street=5 CallAction=28 CheckAction=146 FoldAction=6 RaiseAction=42
+  TightPolicy street=6 CallAction=21 CheckAction=115 FoldAction=11 RaiseAction=20
+[bot] aggression_ratio:
+  street=0 raises=46 calls=93 checks=444 ratio=0.086
+  street=2 raises=0 calls=0 checks=77 ratio=0.000
+  street=3 raises=0 calls=0 checks=454 ratio=0.000
+  street=4 raises=56 calls=26 checks=467 ratio=0.114
+  street=5 raises=43 calls=34 checks=398 ratio=0.100
+  street=6 raises=20 calls=27 checks=338 ratio=0.055
+[bot] equity_vs_pot_odds:
+  ComebackPolicy street=0 count=116 equity=0.252 pot_odds=0.258 diff=-0.006 abs_diff=0.055
+  ComebackPolicy street=4 count=5 equity=0.322 pot_odds=0.255 diff=0.067 abs_diff=0.089
+  ComebackPolicy street=5 count=12 equity=0.271 pot_odds=0.249 diff=0.022 abs_diff=0.069
+  ComebackPolicy street=6 count=32 equity=0.173 pot_odds=0.132 diff=0.042 abs_diff=0.058
+  TightPolicy street=0 count=266 equity=0.287 pot_odds=0.130 diff=0.157 abs_diff=0.230
+  TightPolicy street=2 count=77 equity=0.528 pot_odds=0.000 diff=0.528 abs_diff=0.528
+  TightPolicy street=3 count=157 equity=0.540 pot_odds=0.000 diff=0.540 abs_diff=0.540
+  TightPolicy street=4 count=250 equity=0.542 pot_odds=0.025 diff=0.517 abs_diff=0.517
+  TightPolicy street=5 count=222 equity=0.525 pot_odds=0.041 diff=0.485 abs_diff=0.487
+  TightPolicy street=6 count=167 equity=0.482 pot_odds=0.053 diff=0.429 abs_diff=0.446
+[bot] equity_error:
+  street=3 count=55 avg_abs_err=0.080 avg_samples=74.6 extended=40
+  street=4 count=107 avg_abs_err=0.068 avg_samples=129.3 extended=66
+  street=5 count=118 avg_abs_err=0.060 avg_samples=149.4 extended=58
+  street=6 count=284 avg_abs_err=0.036 avg_samples=238.6 extended=107
+[bot] thresholds:
+  ComebackPolicy street=0 count=116 call=0.252 raise=0.288 call_drift=-0.006 raise_drift=0.030
+  ComebackPolicy street=4 count=5 call=0.240 raise=0.264 call_drift=-0.015 raise_drift=0.009
+  ComebackPolicy street=5 count=12 call=0.240 raise=0.272 call_drift=-0.009 raise_drift=0.023
+  ComebackPolicy street=6 count=32 call=0.145 raise=0.167 call_drift=0.013 raise_drift=0.036
+  TightPolicy street=0 count=266 call=0.170 raise=0.248 call_drift=0.041 raise_drift=0.118
+  TightPolicy street=2 count=77 call=0.039 raise=0.095 call_drift=0.039 raise_drift=0.095
+  TightPolicy street=3 count=157 call=0.039 raise=0.097 call_drift=0.039 raise_drift=0.097
+  TightPolicy street=4 count=250 call=0.066 raise=0.123 call_drift=0.040 raise_drift=0.097
+  TightPolicy street=5 count=222 call=0.089 raise=0.157 call_drift=0.048 raise_drift=0.116
+  TightPolicy street=6 count=167 call=0.118 raise=0.175 call_drift=0.065 raise_drift=0.123
+[bot] discard_ev:
+  TightPolicy street=2 count=157 chosen=0.528 best=0.528 gap=0.000 missed=10 win_rate=0.000 loss_gap=0.000
+  TightPolicy street=3 count=77 chosen=0.586 best=0.587 gap=0.000 missed=2 win_rate=0.000 loss_gap=0.000
+[bot] fold_prevent: none
+[bot] showdown_lines:
+  line=C-C-C-C hands=1 win_rate=0.000 avg_delta=-31.00
+  line=C-K-C-K hands=2 win_rate=0.500 avg_delta=0.00
+  line=C-K-K-C hands=2 win_rate=1.000 avg_delta=4.00
+  line=C-K-K-K hands=24 win_rate=0.565 avg_delta=0.33
+  line=C-K-K-R hands=1 win_rate=0.000 avg_delta=0.00
+  line=C-K-R-R hands=1 win_rate=0.000 avg_delta=-11.00
+  line=C-R-C-C hands=1 win_rate=0.000 avg_delta=0.00
+  line=C-R-K-K hands=2 win_rate=1.000 avg_delta=4.00
+  line=K-K-K-K hands=208 win_rate=0.558 avg_delta=-0.03
+  line=K-K-K-R hands=3 win_rate=0.000 avg_delta=0.00
+  line=K-K-R-K hands=4 win_rate=0.500 avg_delta=-3.00
+  line=K-K-R-R hands=1 win_rate=1.000 avg_delta=11.00
+  line=K-R-K-K hands=3 win_rate=0.667 avg_delta=-1.33
+  line=K-R-K-R hands=1 win_rate=1.000 avg_delta=221.00
+  line=K-R-R-K hands=3 win_rate=0.667 avg_delta=120.00
+  line=K-R-R-R hands=3 win_rate=0.333 avg_delta=-68.00
+  line=R-C-C-C hands=1 win_rate=1.000 avg_delta=25.00
+  line=R-C-C-K hands=1 win_rate=0.000 avg_delta=-13.00
+  line=R-C-K-K hands=1 win_rate=0.000 avg_delta=-7.00
+  line=R-K-C-C hands=1 win_rate=0.000 avg_delta=0.00
+  line=R-K-K-C hands=3 win_rate=1.000 avg_delta=4.67
+  line=R-K-K-K hands=10 win_rate=0.111 avg_delta=-5.10
+  line=R-R-K-K hands=1 win_rate=1.000 avg_delta=400.00
+  line=R-R-R-K hands=1 win_rate=0.000 avg_delta=0.00
+  line=R-R-R-R hands=1 win_rate=1.000 avg_delta=382.00
+[bot] bet_size_ev:
+  street=0 size=large hands=5 win_rate=1.000 avg_delta=7.00
+  street=0 size=medium hands=32 win_rate=0.483 avg_delta=0.94
+  street=0 size=small hands=9 win_rate=0.750 avg_delta=85.67
+  street=4 size=large hands=13 win_rate=1.000 avg_delta=32.46
+  street=4 size=medium hands=2 win_rate=0.500 avg_delta=-1.00
+  street=4 size=small hands=41 win_rate=0.875 avg_delta=20.44
+  street=5 size=large hands=13 win_rate=1.000 avg_delta=63.62
+  street=5 size=medium hands=3 win_rate=0.667 avg_delta=-59.33
+  street=5 size=small hands=27 win_rate=0.808 avg_delta=-0.70
+  street=6 size=large hands=12 win_rate=1.000 avg_delta=21.25
+  street=6 size=medium hands=1 win_rate=0.000 avg_delta=0.00
+  street=6 size=small hands=7 win_rate=0.571 avg_delta=25.71
+[bot] river_value_bet: count=19 win_rate=0.684 avg_delta=22.89
+[bot] opponent_overbet:
+  street=0 total=0.0 overbet=0.436 big=0.436
+  street=4 total=0.0 overbet=0.049 big=0.000
+  street=5 total=0.0 overbet=0.033 big=0.000
+  street=6 total=0.0 overbet=0.059 big=0.000
+[bot] overbet_accuracy: count=1 brier=0.0165 abs_err=0.129
+  street=6 count=1 brier=0.0165 abs_err=0.129
+[bot] fold_equity_accuracy: none
+[bot] range_hint_accuracy: count=267.5 brier=0.2519 abs_err=0.458
+  street=0 count=32.2 brier=0.2824 abs_err=0.496
+  street=4 count=8.0 brier=0.1878 abs_err=0.398
+  street=5 count=11.0 brier=0.2338 abs_err=0.446
+  street=6 count=216.3 brier=0.2506 abs_err=0.456
+  line=C-K-K-K count=24.0 brier=0.2463 abs_err=0.459
+  line=K-K-K-K count=197.6 brier=0.2557 abs_err=0.460
