@@ -933,6 +933,91 @@ def _board_texture_adjustments(board_cards: Sequence[str]) -> Tuple[float, float
     return _board_texture_adjustments_cached(tuple(board_cards))
 
 
+def _rank_counts_from_cards(cards: Sequence[str]) -> dict:
+    counts = {}
+    for card in cards:
+        rank = stats.Card.get_rank_int(card) + 2
+        counts[rank] = counts.get(rank, 0) + 1
+    return counts
+
+
+def _suit_counts_from_cards(cards: Sequence[str]) -> dict:
+    counts = {}
+    for card in cards:
+        suit = stats.Card.get_suit_int(card)
+        counts[suit] = counts.get(suit, 0) + 1
+    return counts
+
+
+def _board_is_paired_cards(board_cards: Sequence[str]) -> bool:
+    if not board_cards:
+        return False
+    return len(set(stats.Card.get_rank_int(card) for card in board_cards)) < len(board_cards)
+
+
+def _board_has_flush_draw(board_cards: Sequence[str], needed: int = 3) -> bool:
+    if not board_cards:
+        return False
+    counts = _suit_counts_from_cards(board_cards)
+    return any(count >= needed for count in counts.values())
+
+
+def _board_four_connected(board_cards: Sequence[str]) -> bool:
+    if len(board_cards) < 4:
+        return False
+    ranks = {stats.Card.get_rank_int(card) + 2 for card in board_cards}
+    if 14 in ranks:
+        ranks.add(1)
+    for start in range(1, 11):
+        hits = 0
+        for r in range(start, start + 5):
+            if r in ranks:
+                hits += 1
+        if hits >= 4:
+            return True
+    return False
+
+
+def _hand_pair_info(board_cards: Sequence[str], hero_hand: Sequence[str]) -> Tuple[int, int]:
+    counts = _rank_counts_from_cards(list(board_cards) + list(hero_hand))
+    if not counts:
+        return 0, 0
+    max_count = max(counts.values())
+    pair_count = sum(1 for count in counts.values() if count >= 2)
+    return max_count, pair_count
+
+
+def _hand_has_flush(board_cards: Sequence[str], hero_hand: Sequence[str]) -> bool:
+    counts = _suit_counts_from_cards(list(board_cards) + list(hero_hand))
+    return any(count >= 5 for count in counts.values())
+
+
+def _hand_has_straight(board_cards: Sequence[str], hero_hand: Sequence[str]) -> bool:
+    ranks = {stats.Card.get_rank_int(card) + 2 for card in list(board_cards) + list(hero_hand)}
+    if 14 in ranks:
+        ranks.add(1)
+    for start in range(1, 11):
+        if all((start + offset) in ranks for offset in range(5)):
+            return True
+    return False
+
+
+def _hero_top_pair_only(board_cards: Sequence[str], hero_hand: Sequence[str]) -> bool:
+    if not board_cards or not hero_hand:
+        return False
+    max_count, pair_count = _hand_pair_info(board_cards, hero_hand)
+    if max_count != 2 or pair_count != 1:
+        return False
+    if _hand_has_flush(board_cards, hero_hand) or _hand_has_straight(board_cards, hero_hand):
+        return False
+    board_counts = _rank_counts_from_cards(board_cards)
+    top_rank = max(board_counts.keys())
+    if board_counts.get(top_rank, 0) != 1:
+        return False
+    hero_ranks = {stats.Card.get_rank_int(card) + 2 for card in hero_hand}
+    return top_rank in hero_ranks
+
+
 def _pairwise_adjustments(hero_hand: Sequence[str], board_cards: Sequence[str]) -> Tuple[float, float, float]:
     if not hero_hand:
         return 0.0, 0.0, 0.0

@@ -294,6 +294,13 @@ class TightPolicy:
                     aggro_gate -= 0.02
             aggro_gate = max(0.56, aggro_gate)
 
+            suppress_turn_raise = False
+            if player.street == 5 and player.hero.continue_cost > 0:
+                if (core._board_four_connected(board_cards) or core._board_has_flush_draw(board_cards)) and core._hero_top_pair_only(
+                    board_cards, hero_hand
+                ):
+                    suppress_turn_raise = True
+
             if min_raise > raise_cap or min_raise > player.hero.stack // 3:
                 pass
             elif raise_war:
@@ -304,6 +311,8 @@ class TightPolicy:
                 if target >= min_raise:
                     return _record(RaiseAction(target), equity, pot_odds)
             elif core.is_river(player.street) and equity < core._RIVER_VALUE_FLOOR + opp_river_floor_adj:
+                pass
+            elif suppress_turn_raise:
                 pass
             elif equity < aggro_gate:
                 pass
@@ -320,6 +329,12 @@ class TightPolicy:
                     equity,
                     value_mult=value_mult,
                 )
+                if core.is_river(player.street) and player.hero.continue_cost == 0:
+                    board_paired = core._board_is_paired_cards(board_cards)
+                    if board_paired:
+                        max_count, pair_count = core._hand_pair_info(board_cards, hero_hand)
+                        if max_count == 3 and pair_count == 1:
+                            target = min(target, int(pot_total * 0.45))
                 target = core._suppress_medium_raise_target(target, min_raise, pot_total, equity)
                 if core.is_river(player.street) and equity < core._NUT_RAISE_EQUITY:
                     river_cap = int(pot_total * core._RIVER_MAX_RAISE_FRAC)
@@ -354,6 +369,18 @@ class TightPolicy:
 
         if core.is_river(player.street) and player.hero.continue_cost > 0 and FoldAction in legal_actions:
             passive_line = core._is_passive_line(line_key)
+            ratio = player.hero.continue_cost / float(max(1, pot_total))
+            board_paired = core._board_is_paired_cards(board_cards)
+            board_flushy = core._board_has_flush_draw(board_cards)
+            if ratio >= 0.9 and board_paired and board_flushy:
+                max_count, pair_count = core._hand_pair_info(board_cards, hero_hand)
+                has_flush = core._hand_has_flush(board_cards, hero_hand)
+                has_straight = core._hand_has_straight(board_cards, hero_hand)
+                if not has_flush and not has_straight and max_count < 3 and pair_count < 2:
+                    anti_rate = core._anti_exploit_rate(player)
+                    if anti_rate > 0 and CallAction in legal_actions and random.random() < anti_rate:
+                        return _record(CallAction(), equity, pot_odds)
+                    return _record(FoldAction(), equity, pot_odds)
             river_call_gate = 0.03 + 0.04 * max(0.0, 0.35 - confidence) / 0.35
             river_call_gate += 0.02 * max(0.0, strength - 0.55)
             if passive_line:
@@ -365,6 +392,18 @@ class TightPolicy:
                 return _record(FoldAction(), equity, pot_odds)
 
         if player.hero.continue_cost > 0 and FoldAction in legal_actions:
+            if player.street == 5:
+                ratio = player.hero.continue_cost / float(max(1, pot_total))
+                if ratio >= 0.9:
+                    board_wet = core._board_four_connected(board_cards) or core._board_has_flush_draw(board_cards)
+                    max_count, pair_count = core._hand_pair_info(board_cards, hero_hand)
+                    has_flush = core._hand_has_flush(board_cards, hero_hand)
+                    has_straight = core._hand_has_straight(board_cards, hero_hand)
+                    if board_wet and max_count <= 2 and pair_count <= 1 and not has_flush and not has_straight:
+                        anti_rate = core._anti_exploit_rate(player)
+                        if anti_rate > 0 and CallAction in legal_actions and random.random() < anti_rate:
+                            return _record(CallAction(), equity, pot_odds)
+                        return _record(FoldAction(), equity, pot_odds)
             last_call_street = getattr(player, "_last_hero_bet_street", None)
             last_action = getattr(player, "_last_hero_bet_action", None)
             if last_action == "call" and last_call_street is not None and last_call_street != player.street:
