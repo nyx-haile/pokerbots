@@ -1,9 +1,0 @@
-[pkrbot] pkrbot already available
-[bot] init python=3.7.17
-[bot] cwd=/tmp/tmpeg0zdxcd/6cb6c70d4d9d1427850c/source/neuropoker
-[bot] executable=/usr/local/bin/python3.7
-[bot] sys.path[0:3]=['/tmp/tmpeg0zdxcd/6cb6c70d4d9d1427850c/source/neuropoker', '/usr/local/lib/python37.zip', '/usr/local/lib/python3.7']
-[bot] env.PYTHONPATH=None
-[bot] env.NEUROPOKER_EVAL_BACKEND=None
-[bot] stats=ok
-[bot] first_action street=0 legal={<class 'skeleton.actions.RaiseAction'>, <class 'skeleton.actions.FoldAction'>, <class 'skeleton.actions.CallAction'>}
