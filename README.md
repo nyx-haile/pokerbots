@@ -1,0 +1,42 @@
+**Overview**
+
+The following is an in-depth reflection of the design, implementation, and performance of my pokerbot. For context my team 'team' placed ~15 out of 70. The bot is primarily implemented in python and makes heavy use of AI-assisted code writing. This is my first large-scale AI-assisted project, and some of the realisations about my workflow with codex, github copilot, and claude code are more generally relevant.
+
+**Background**
+
+Pokerbots is an internal MIT competition to design a bot to play a variant of poker. This year's variation was heads up, included an extra card in preflop, and had fixed stack sizes per hand. Total delta was tracked across all hands and after 1000 rounds, whoever had positive delta was the winner. The key challenges were balancing computation time, taking advantage of the unique strategies of the variant, and learning to exploit and defend against exploitation. 
+
+**Design**
+
+My original goal with pokerbots was to utilise some of the ideas for graph-based neural networks I'd been toying around with in nyx-haile/neuro, hence the name 'neuropoker.' Almost immediately, this proved to be extremely difficult because these ideas were still very much in their infancy. (the first time I successfully trained a perceptron on MNIST wasn't until after the conclusion of the competition) This is where I made my first mistake. I asked chatgpt to do a deep research survey on poker strategies and help me to devise a general framework to split between stats computation and strategic computation, with the intention uof using the GNN to choose between strategic spaces. Deep research recommended a threshold-based approach, which was a terrible decision for a few reasons. Firstly, it's quite difficult to train and improve the model because adding new features leads to threshold drift.
+
+A brief interjection to explain threshold drift: When we have a model that is made up of some number of additive parameters, it's possible for edge cases to exist where the model should have a certain behaviour but it doesn't because the sum of the parameters is too large or too small for a critical parameter to have its intended effect. Let's say we intend to approximate whether or not we should go in. We start with equity E, add in a fold responsiveness factor F, add in a board texture factor T, and add in a call probability C. The action criterion is, let's say 0.8. So
+
+A=E+F+T+C >0.8 -> we make an action
+
+This model works quite well when the number of variables is small w.r.t. to the variance of each variable, (i.e., that the variance of the action criterion is close to the variance of the variables) but experiences threshold drift when variance increases by a large enough factor, or the number of variables increases by a large enough factor. This is exactly what happened in my build. Week 2 is when the threshold implementation was fully realised and that was by far my best performing week. I was able to get and hold positions in top 10 and get close to top 5 because the model was simple and it worked, but I'd lose out to more advanced models. Instead of going back to the drawing board I doubled down on fine-tuning the thresholds, adding more and trying to find optimal scalars using optuna from my laptop (which was extremely slow and ineffective), leading to a situation where at the end of week 3 I did not really know exactly which thresholds needed to be fixed when I identified bad behaviour. Some significant blame has to be assigned here on how I did my prompting. I often approved new thresholds without trying to prune or combine them, which lead to me having dozens of parameters to optimise. I also used deep research extensively to try and find sources, when my own research or the resources provided by the class might have been better starting points. I remember distinctly when at the awards ceremony, the announcers mentioned that some teams were inspired by CFR and famous poker solvers. I had been treating the competition like a class when I should have been using the resources in a similar field and figuring out how to distill them into something that worked for what I needed.
+
+**Strategy/Metastrategy**
+
+The format of the Pokerbots scrim server leads to some interesting metastrategies for developing your bot. Challenges are not automatic, which means that if you are not in the top 5/10, you will not actually get any information on whether your bot is good or not. I didn't automate this procedure, but if it is not automated next year I would highly recommend automating it, and automating the download and review of scrim games. I gained significantly more value from reviewing my scrim games than from any kind of self-play, numerical calculations, code reviews or test cases, and it was by reviewing my scrim games that I learned about win-locking. It is crucial that the signals from these games are harvested and put to good use. 
+
+Win-locking in particularly is an important strategy if the format of the tournament stays the same. Due to the fixed stack sizes and fixed number of rounds, it is strictly a loss to play any game where you could still win by folding, because the only thing you do is offer your opponent the chance to get back in the lead. I implemented a simple win-locking strategy that compared the total delta to the number of rounds remaining, and if I would be positive by folding every round, I did it. This improved my position by at least 5 places, and is such a broken strategy that I'm writing it here because I believe that every team should implement this until the administration of the competition figures out a way to remove it. 
+
+**Policy**
+
+Yet another thing I realised from my competition (thank you 'Policy Gradient is All You Need') was that the threshold-based implementation---even with the fine tuning I did earlier, would eventually run into a wall when I wanted to encode different behaviours. I'm not sure that this is what they intended, but I designed a policy system based off their team name recommendation with a few separate threshold policies that a strategic overseer decided between. This allowed me to control thresholds more finely, but due to the mess that my codebase was by this point, I couldn't perfectly separate each of the threshold variables into its own policy. It still lead me to improve by a few place slots, but at the end of the day, was yet another thing that could have been rectified by better management of my AI coding tools.
+
+**Vibe-Coding**
+
+As I've been alluding, my biggest problems originated from the mismanagement and misuse of my AI tools. As I said, I've vibe-coded before, but this was the first complete, largely original project that I worked on using AI, and my inexperience cost me time and credits, and potentially even prize money. The main culprits were feature creep, self-reliance, and bad code hygiene. Feature creep is quite self-explanatory, most cli coding tools tend to try and implement new features, potentially more features than you asked for, and generally need to be returned to task, especially when trying to build from descriptions. Self-reliance was the biggest problem in terms of development speed and token usage. Codex, Copilot, and Claude Code were all extremely happy to design perfectly redundant pieces of code that already exist instead of spending a fraction of the tokens to research existing modules, or tell me to research existing modules. Finally, as a consequence of the two of these, regular refactors would have been necessary to keep the codebase lean, but because of a combination of time pressure and unawareness, I didn't address this problem until it was too late.
+
+
+**Further Work**
+
+*Theory*
+
+The idea that threshold-based functions can work is a constrained application of Kolmogorov-Arnold representation, an idea which I'm hoping to explore more in my trading algorithms work. I'd also like to explore diffusion based counterfactual generation for poker, inspired by this arxiv paper. https://arxiv.org/abs/2602.03776
+
+*Poker*
+
+This work also gave me a larger interest in live poker, which I've been playing significantly more of. So far, in my 4 tournament appearances, I have 1 win and 1 5th place. I'm hoping to play a few more tournaments before the year ends. I may also try to develop some tournament trainers and human-calculable heuristics to help me improve my game. 
